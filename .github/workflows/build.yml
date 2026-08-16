@@ -1,0 +1,41 @@
+name: Build Windows installer
+
+# Runs on a real Windows runner rather than cross-compiling NSIS through Wine — see CLAUDE.md
+# ("Packaging") for why: electron-builder's NSIS target has a known two-pass build issue under
+# Wine that this workflow sidesteps entirely by building on the target OS.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run test
+
+      - name: Build and package
+        run: npm run dist
+        env:
+          # Only present on a real release; electron-builder publishes to GitHub Releases only
+          # when this is set and the ref is a tag, per electron-updater's needs (spec §11).
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: purgewave-windows-installer
+          path: release/*.exe
+          if-no-files-found: error

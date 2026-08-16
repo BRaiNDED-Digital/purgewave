@@ -1,0 +1,28 @@
+appId: com.purgewave.app
+productName: PurgeWave
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+# electron-updater checks this against GitHub Releases (spec §11: no server needed). Replace
+# owner/repo with the real values before cutting an actual release — these are placeholders.
+publish:
+  provider: github
+  owner: your-github-username
+  repo: purgewave
