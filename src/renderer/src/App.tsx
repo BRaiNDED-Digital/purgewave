@@ -171,59 +171,103 @@ function App() {
     )
   }
 
+  const scanning = scan.phase === 'scanning'
+
   return (
-    <main style={{ fontFamily: 'sans-serif', padding: '2rem', maxWidth: 560 }}>
-      <h1>PurgeWave</h1>
+    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-6 p-8">
+      <h1 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+        PurgeWave
+      </h1>
 
       {root ? (
-        <p>
-          Music folder: <code>{root}</code>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Music folder:{' '}
+          <code
+            className="rounded px-1.5 py-0.5 text-xs"
+            style={{ backgroundColor: 'var(--surface-raised)', color: 'var(--text-primary)' }}
+          >
+            {root}
+          </code>
         </p>
       ) : (
-        <p>No music folder chosen yet.</p>
+        <p style={{ color: 'var(--text-secondary)' }}>No music folder chosen yet.</p>
       )}
 
-      <div style={{ display: 'flex', gap: '0.75rem' }}>
-        <button onClick={handleChooseFolder} disabled={scan.phase === 'scanning'}>
-          {root ? 'Change folder & rescan' : 'Choose music folder'}
-        </button>
+      <button
+        onClick={handleChooseFolder}
+        disabled={scanning}
+        className="rounded-xl border px-5 py-3 font-medium disabled:opacity-40"
+        style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}
+      >
+        {root ? 'Change folder & rescan' : 'Choose music folder'}
+      </button>
+
+      <div className="flex flex-wrap gap-3">
         {trackCount > 0 && (
-          <button onClick={() => setView({ name: 'sessionPicker' })} disabled={scan.phase === 'scanning'}>
+          <button
+            onClick={() => setView({ name: 'sessionPicker' })}
+            disabled={scanning}
+            className="rounded-xl border px-5 py-3 font-medium disabled:opacity-40"
+            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+          >
             Start session
           </button>
         )}
         {trackCount > 0 && (
-          <button onClick={() => setView({ name: 'review', sessionKeptIds: [] })} disabled={scan.phase === 'scanning'}>
+          <button
+            onClick={() => setView({ name: 'review', sessionKeptIds: [] })}
+            disabled={scanning}
+            className="rounded-xl border px-5 py-3 font-medium disabled:opacity-40"
+            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+          >
             Review marked
           </button>
         )}
-        <button onClick={() => setView({ name: 'restore' })} disabled={scan.phase === 'scanning'}>
+        <button
+          onClick={() => setView({ name: 'restore' })}
+          disabled={scanning}
+          className="rounded-xl border px-5 py-3 font-medium disabled:opacity-40"
+          style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+        >
           Restore moved files
         </button>
-        <button onClick={() => setView({ name: 'settings' })} disabled={scan.phase === 'scanning'}>
+      </div>
+
+      <div className="flex justify-between border-t pt-4 text-sm" style={{ borderColor: 'var(--border-subtle)' }}>
+        <button
+          onClick={() => setView({ name: 'settings' })}
+          disabled={scanning}
+          className="underline disabled:opacity-40"
+          style={{ color: 'var(--text-muted)' }}
+        >
           Settings
         </button>
-        <button onClick={() => setView({ name: 'stats' })} disabled={scan.phase === 'scanning'}>
+        <button
+          onClick={() => setView({ name: 'stats' })}
+          disabled={scanning}
+          className="underline disabled:opacity-40"
+          style={{ color: 'var(--text-muted)' }}
+        >
           Stats
         </button>
       </div>
 
-      {scan.phase === 'scanning' && (
-        <p>
+      {scanning && (
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
           Scanning…{' '}
           {scan.progress ? `${scan.progress.scanned} / ${scan.progress.total}` : 'starting'}
         </p>
       )}
 
       {scan.phase === 'done' && (
-        <p>
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
           Scan complete: {scan.result.total} tracks indexed ({scan.result.added} added,{' '}
           {scan.result.updated} updated, {scan.result.missing} newly missing).
         </p>
       )}
 
       {scan.phase === 'aborted' && (
-        <p style={{ color: 'crimson' }}>
+        <p className="text-sm" style={{ color: 'var(--discard)' }}>
           Can&apos;t reach your music folder
           {scan.reason === 'unreadable-root'
             ? " — it doesn't exist or isn't readable right now."
@@ -232,8 +276,12 @@ function App() {
         </p>
       )}
 
-      {scan.phase === 'error' && <p style={{ color: 'crimson' }}>Scan failed: {scan.message}</p>}
-    </main>
+      {scan.phase === 'error' && (
+        <p className="text-sm" style={{ color: 'var(--discard)' }}>
+          Scan failed: {scan.message}
+        </p>
+      )}
+    </div>
   )
 }
 

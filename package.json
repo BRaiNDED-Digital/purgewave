@@ -8,7 +8,8 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win"
+    "dist": "electron-vite build && electron-builder --win",
+    "dist:local": "electron-vite build && electron-builder --win --dir && rm -f PurgeWave-win.zip && cd release/win-unpacked && zip -r -q ../../PurgeWave-win.zip . && cd ../.. && echo 'Built PurgeWave-win.zip in the project root.'"
   },
   "keywords": [],
   "author": "",

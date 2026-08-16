@@ -292,47 +292,44 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
       )}
 
       <div className="relative h-[520px] w-full max-w-md">
-        {stackIds
-          .slice()
-          .reverse()
-          .map((id, revIdx) => {
-            const stackIndex = stackIds.length - 1 - revIdx
-            const card = cards.get(id)
-            if (!card) return null
-            return (
-              <SwipeCard
-                key={id}
-                ref={(handle) => {
-                  if (handle) cardRefs.current.set(id, handle)
-                  else cardRefs.current.delete(id)
-                }}
-                card={card}
-                stackIndex={stackIndex}
-                reducedMotion={reducedMotion}
-                enterFromExitDirection={lastUndone?.id === id ? lastUndone.direction : null}
-                onCommitted={(direction) => commit(id, direction)}
-                onExitAnimationComplete={() => setExiting((e) => e.filter((x) => x.id !== id))}
-                onZoneClick={handleZoneClick}
-              />
-            )
-          })}
-
-        {exiting.map(({ id, direction }) => {
+        {/*
+         * Stack cards and exiting cards are merged into ONE array and mapped in a single pass —
+         * not two separate `{a.map()}{b.map()}` expressions — because React reconciles each
+         * `{array.map(...)}` JSX expression as its own independent child-list keyed only within
+         * itself. A card whose key moves from the "stack" expression to the "exiting" expression
+         * across a render (even with an identical key value) does NOT get matched as the same
+         * fiber: React unmounts it from the first list and mounts a brand new instance in the
+         * second, discarding the in-flight drag/exit motion values. That produced the exact bug
+         * this merge fixes — confirmed via CDP trace (mount/unmount logging), not just reasoning:
+         * the committed card's SwipeCard instance actually unmounted and a fresh, static
+         * (opacity 1, x 0, never animating) replacement mounted in its place, permanently
+         * overlaying the newly-promoted front card. A single `.map()` over one combined array
+         * keeps it as one reconciliation context, so the same fiber — and its live x/opacity
+         * motion values mid-animation — survives the stack→exiting transition.
+         */}
+        {[
+          ...stackIds
+            .slice()
+            .reverse()
+            .map((id, revIdx) => ({ id, stackIndex: stackIds.length - 1 - revIdx, exiting: false as const })),
+          ...exiting.map(({ id }) => ({ id, stackIndex: -1, exiting: true as const }))
+        ].map(({ id, stackIndex, exiting: isExiting }) => {
           const card = cards.get(id)
           if (!card) return null
           return (
             <SwipeCard
-              key={`exiting-${id}`}
+              key={id}
               ref={(handle) => {
                 if (handle) cardRefs.current.set(id, handle)
                 else cardRefs.current.delete(id)
               }}
               card={card}
-              stackIndex={-1}
+              stackIndex={stackIndex}
               reducedMotion={reducedMotion}
-              onCommitted={() => {}}
+              enterFromExitDirection={!isExiting && lastUndone?.id === id ? lastUndone.direction : null}
+              onCommitted={(direction) => commit(id, direction)}
               onExitAnimationComplete={() => setExiting((e) => e.filter((x) => x.id !== id))}
-              onZoneClick={() => {}}
+              onZoneClick={isExiting ? () => {} : handleZoneClick}
             />
           )
         })}

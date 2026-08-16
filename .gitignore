@@ -3,5 +3,6 @@ out/
 dist/
 dist-electron/
 release/
+PurgeWave-win.zip
 *.log
 .DS_Store
