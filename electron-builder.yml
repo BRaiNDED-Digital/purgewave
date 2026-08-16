@@ -20,9 +20,8 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
 
-# electron-updater checks this against GitHub Releases (spec §11: no server needed). Replace
-# owner/repo with the real values before cutting an actual release — these are placeholders.
+# electron-updater checks this against GitHub Releases (spec §11: no server needed).
 publish:
   provider: github
-  owner: your-github-username
+  owner: BRaiNDED-Digital
   repo: purgewave
