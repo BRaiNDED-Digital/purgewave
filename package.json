@@ -8,8 +8,8 @@
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win",
-    "dist:local": "electron-vite build && electron-builder --win --dir && rm -rf PurgeWave-win && cp -r release/win-unpacked PurgeWave-win && echo 'Updated PurgeWave-win/ in the project root.'"
+    "dist": "npm install --no-save --os=win32 --cpu=x64 sharp && electron-vite build && electron-builder --win",
+    "dist:local": "npm install --no-save --os=win32 --cpu=x64 sharp && electron-vite build && electron-builder --win --dir && rm -rf PurgeWave-win && cp -r release/win-unpacked PurgeWave-win && echo 'Updated PurgeWave-win/ in the project root.'"
   },
   "keywords": [],
   "author": "",
