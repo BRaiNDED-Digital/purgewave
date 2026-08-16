@@ -133,6 +133,8 @@ Reproduced twice, including after clearing electron-builder's NSIS cache. This i
 
 `src/main/updater.ts` wires `electron-updater` per §11 (check on launch, silent background download, install on next quit — `autoInstallOnAppQuit` is the library default, no extra code needed for that part), gated by the `checkForUpdates` setting and `app.isPackaged` (a no-op in dev). **Not exercised end-to-end anywhere** — that needs a real packaged build pointed at a real GitHub Releases feed, neither of which exist yet in this sandbox. Treat it as implemented-but-unverified until tested against an actual release.
 
+**`npm run dist:local`** — run this after every change the user needs to try on their own Windows machine, so they can test the latest build immediately without a commit/push/CI round-trip. It's `electron-vite build && electron-builder --win --dir`, then copies `release/win-unpacked/` to `PurgeWave-win/` at the project root (overwriting whatever was there). `--dir` deliberately skips the NSIS step — that's the exact step broken under Wine in this container (see above) — so this produces an unpacked-but-fully-functional `PurgeWave-win/PurgeWave.exe` plus its resources, not a single installer file. `PurgeWave-win/` is gitignored; it's a local scratch artifact, not something to commit.
+
 ## Non-negotiables
 
 - There is no skip / "decide later" gesture — every card resolves to keep or discard (spec §6.4, §9.4).
