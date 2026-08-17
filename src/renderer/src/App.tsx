@@ -32,6 +32,7 @@ function App() {
   const [view, setView] = useState<View>({ name: 'library' })
   const [resumeShown, setResumeShown] = useState(false)
   const [theme, setTheme] = useState<Theme>('system')
+  const [startingSession, setStartingSession] = useState(false)
 
   useTheme(theme)
 
@@ -83,6 +84,23 @@ function App() {
   }
 
   async function startSession(limit: SessionLimit): Promise<void> {
+    // Rescan right before building the queue, not just on an explicit "Change folder & rescan"
+    // click — a track that was disposed of and later reappears on disk (restored from the
+    // Recycle Bin, copied back by hand) only gets picked back up as unreviewed on a scan, and
+    // requiring the user to remember a manual rescan defeats that. Cheap enough to always do:
+    // an unchanged tree's tags aren't re-read (§3.8), measured at ~100ms for this 1000-track
+    // fixture. If the scan aborts (unreadable root, empty tree — §3.5's guard), proceed anyway
+    // with whatever was already indexed rather than blocking the session entirely; the guard's
+    // own job is leaving existing state untouched, not preventing swiping.
+    if (root) {
+      setStartingSession(true)
+      const outcome = await window.purgewave.scan(root)
+      setStartingSession(false)
+      if (!('aborted' in outcome)) {
+        setTrackCount(outcome.total)
+        setScan({ phase: 'done', result: outcome })
+      }
+    }
     const queue = await window.purgewave.sessionStart(limit)
     setView({ name: 'swiping', queue, limit })
   }
@@ -126,7 +144,7 @@ function App() {
   if (view.name === 'sessionPicker') {
     return (
       <div className="flex min-h-screen flex-col">
-        <SessionLengthPicker onStart={startSession} />
+        <SessionLengthPicker onStart={startSession} starting={startingSession} />
       </div>
     )
   }

@@ -24,9 +24,11 @@ function rememberSessionLimit(limit: SessionLimit): void {
 
 interface Props {
   onStart: (limit: SessionLimit) => void
+  /** True while the pre-session rescan (triggered after a limit is picked) is in flight. */
+  starting: boolean
 }
 
-export function SessionLengthPicker({ onStart }: Props) {
+export function SessionLengthPicker({ onStart, starting }: Props) {
   const last = getLastSessionLimit()
 
   function choose(limit: SessionLimit): void {
@@ -45,7 +47,8 @@ export function SessionLengthPicker({ onStart }: Props) {
             key={opt.label}
             onClick={() => choose(opt.limit)}
             autoFocus={opt.limit === last}
-            className="rounded-xl border px-6 py-4 text-lg font-medium transition-colors"
+            disabled={starting}
+            className="rounded-xl border px-6 py-4 text-lg font-medium transition-colors disabled:opacity-40"
             style={{
               borderColor: opt.limit === last ? 'var(--accent)' : 'var(--border-subtle)',
               color: 'var(--text-primary)',
@@ -56,6 +59,11 @@ export function SessionLengthPicker({ onStart }: Props) {
           </button>
         ))}
       </div>
+      {starting && (
+        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+          Checking for changes…
+        </p>
+      )}
     </div>
   )
 }
