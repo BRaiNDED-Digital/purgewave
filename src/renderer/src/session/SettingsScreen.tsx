@@ -92,6 +92,23 @@ export function SettingsScreen({ onDone, onThemeChange }: Props) {
       </Row>
 
       <Row>
+        <span style={{ color: 'var(--text-primary)' }}>Preview start position</span>
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={0.5}
+            step={0.05}
+            value={settings.previewStartRatio}
+            onChange={(e) => update({ previewStartRatio: Number(e.target.value) })}
+          />
+          <span className="w-10 text-right text-xs" style={{ color: 'var(--text-muted)' }}>
+            {Math.round(settings.previewStartRatio * 100)}%
+          </span>
+        </div>
+      </Row>
+
+      <Row>
         <span style={{ color: 'var(--text-primary)' }}>Side-click decisions</span>
         <input
           type="checkbox"

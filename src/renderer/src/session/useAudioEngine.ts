@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { Card } from '../../../shared/types'
 
-const START_OFFSET_RATIO = 0.2
 const FADE_IN_MS = 1000
 const FADE_OUT_MS = 200
 const SLOW_PREPARE_MS = 400
@@ -20,6 +19,7 @@ export interface AudioEngineSettings {
   autoplay: boolean
   volume: number // 0..1
   normalize: boolean
+  previewStartRatio: number // 0..1, how far into the track playback begins (§8 setting)
 }
 
 export interface AudioEngineHandle {
@@ -31,8 +31,8 @@ function dbToGain(db: number): number {
   return 10 ** (db / 20)
 }
 
-// Tracks that timed out preparing from the 20% offset once fall back to offset 0 on every
-// subsequent play, per §3.7 rule 4 ("a fast start from the beginning beats a slow start from
+// Tracks that timed out preparing from the configured start offset once fall back to offset 0
+// on every subsequent play, per §3.7 rule 4 ("a fast start from the beginning beats a slow start from
 // the middle") — session-scoped, deliberately not persisted.
 const slowStartTracks = new Set<string>()
 
@@ -119,7 +119,7 @@ export function useAudioEngine(
     slot.el.muted = true
     slot.el.volume = 1
 
-    const offsetSec = slowStartTracks.has(card.id) ? 0 : card.durationSec * START_OFFSET_RATIO
+    const offsetSec = slowStartTracks.has(card.id) ? 0 : card.durationSec * settingsRef.current.previewStartRatio
 
     await new Promise<void>((resolve) => {
       const onLoaded = (): void => {
@@ -263,7 +263,7 @@ export function useAudioEngine(
       const slots = slotsRef.current
       if (!slots || !frontCard) return
       const active = slots[activeIndexRef.current]
-      const offset = slowStartTracks.has(frontCard.id) ? 0 : frontCard.durationSec * START_OFFSET_RATIO
+      const offset = slowStartTracks.has(frontCard.id) ? 0 : frontCard.durationSec * settingsRef.current.previewStartRatio
       active.el.currentTime = offset
       void active.el.play().catch(() => {})
     }

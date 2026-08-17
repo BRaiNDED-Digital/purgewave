@@ -56,6 +56,7 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
   const [autoplay, setAutoplay] = useState(true)
   const [normalize, setNormalize] = useState(true)
   const [volume, setVolume] = useState(0.8)
+  const [previewStartRatio, setPreviewStartRatio] = useState(0.2)
   const [sideClickDecisions, setSideClickDecisions] = useState(true)
   const settingsLoaded = useRef(false)
 
@@ -64,11 +65,14 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
 
   // Settings (§8) are persisted in main via settings.json — load once, then persist changes
   // made from this screen (volume nudges, etc.) back out. Skips the initial load's own echo.
+  // previewStartRatio has no in-session control (only Settings screen edits it, which isn't
+  // reachable mid-session), so it's loaded here but never written back from this component.
   useEffect(() => {
     window.purgewave.getSettings().then((s) => {
       setAutoplay(s.autoplay)
       setNormalize(s.normalizeVolume)
       setVolume(s.volume)
+      setPreviewStartRatio(s.previewStartRatio)
       setSideClickDecisions(s.sideClickDecisions)
       settingsLoaded.current = true
     })
@@ -85,7 +89,7 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
 
   const frontCard = cards.get(queue[currentIndex]) ?? null
   const nextCard = cards.get(queue[currentIndex + 1]) ?? null
-  const audio = useAudioEngine(frontCard, nextCard, { autoplay, volume, normalize })
+  const audio = useAudioEngine(frontCard, nextCard, { autoplay, volume, normalize, previewStartRatio })
 
   // Windowed prefetch (§3.7 rule 2): keep the current window plus the next one loaded, never
   // the whole queue — a 200k-track session would freeze on structured-clone otherwise.

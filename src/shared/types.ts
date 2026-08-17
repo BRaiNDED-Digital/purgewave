@@ -139,6 +139,7 @@ export interface Settings {
   autoplay: boolean
   volume: number
   normalizeVolume: boolean
+  previewStartRatio: number
   disposalMode: DisposalMode
   quarantineFolder: string | null
   sideClickDecisions: boolean
@@ -154,6 +155,7 @@ export function createDefaultSettings(): Settings {
     autoplay: true,
     volume: 0.8,
     normalizeVolume: true,
+    previewStartRatio: 0.2,
     disposalMode: 'recycle-bin',
     quarantineFolder: null,
     sideClickDecisions: true,
