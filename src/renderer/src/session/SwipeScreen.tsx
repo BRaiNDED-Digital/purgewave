@@ -295,11 +295,13 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
         </div>
       )}
 
-      {/* overflow-hidden: a card mid-exit translates to ~1.4x viewport width via a raw
-          transform, well past this container's bounds — without clipping here, the browser
-          grows the document's scrollable area to fit it and a scrollbar flashes in and out
-          for the duration of every exit animation. */}
-      <div className="relative h-[520px] w-full max-w-md overflow-hidden">
+      {/* No overflow-hidden here on purpose — this container is exactly card-sized, so clipping
+          at this level cuts the exit animation off right at the card's own edge instead of
+          letting it visually slide and fade across the viewport. The scrollbar this used to
+          cause (a card mid-exit translates ~1.4x viewport width past this container's bounds)
+          is handled once, globally, via `overflow-x: hidden` on body in styles.css instead —
+          that clips only at the true document edge, not the card's local bounding box. */}
+      <div className="relative h-[520px] w-full max-w-md">
         {/*
          * Stack cards and exiting cards are merged into ONE array and mapped in a single pass —
          * not two separate `{a.map()}{b.map()}` expressions — because React reconciles each
