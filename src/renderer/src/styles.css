@@ -58,4 +58,8 @@
 body {
   background: var(--surface-base);
   color: var(--text-primary);
+  /* Safety net alongside the swipe-stack's own overflow-hidden: nothing in this app scrolls
+     horizontally by design, so a stray transform-driven overflow (an exiting card, a future
+     animation) should never surface a horizontal scrollbar at the document level. */
+  overflow-x: hidden;
 }

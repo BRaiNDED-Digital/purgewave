@@ -223,13 +223,18 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
             {keep.map((t) => (
               <li
                 key={t.id}
-                className="flex items-center justify-between rounded border px-2 py-1 text-xs"
+                className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs"
                 style={{ borderColor: 'var(--border-subtle)' }}
               >
-                <span className="truncate" style={{ color: 'var(--text-primary)' }}>
-                  {t.title} — {t.artist}
-                </span>
-                <button onClick={() => flip(t.id, 'keep')} className="ml-2 shrink-0 underline" style={{ color: 'var(--discard)' }}>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>
+                    {t.title}
+                  </p>
+                  <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {t.artist}
+                  </p>
+                </div>
+                <button onClick={() => flip(t.id, 'keep')} className="shrink-0 underline" style={{ color: 'var(--discard)' }}>
                   Discard instead
                 </button>
               </li>
@@ -245,13 +250,18 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
             {del.map((t) => (
               <li
                 key={t.id}
-                className="flex items-center justify-between rounded border px-2 py-1 text-xs"
+                className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs"
                 style={{ borderColor: 'var(--border-subtle)' }}
               >
-                <span className="truncate" style={{ color: 'var(--text-primary)' }}>
-                  {t.title} — {t.artist}
-                </span>
-                <button onClick={() => flip(t.id, 'delete')} className="ml-2 shrink-0 underline" style={{ color: 'var(--keep)' }}>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>
+                    {t.title}
+                  </p>
+                  <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {t.artist}
+                  </p>
+                </div>
+                <button onClick={() => flip(t.id, 'delete')} className="shrink-0 underline" style={{ color: 'var(--keep)' }}>
                   Keep instead
                 </button>
               </li>

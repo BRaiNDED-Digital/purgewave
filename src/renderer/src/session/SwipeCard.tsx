@@ -25,6 +25,9 @@ interface Props {
   onZoneClick: (zone: 'left' | 'center' | 'right') => void
   /** Set when this mount is an undo restoring the card — it re-enters from the side it left. */
   enterFromExitDirection?: 'keep' | 'discard' | null
+  /** Only meaningful (and only rendered) for the true interactive front card. */
+  isPlaying: boolean
+  onTogglePlay?: () => void
 }
 
 function exitDurationMs(velocity: number, reducedMotion: boolean): number {
@@ -34,7 +37,17 @@ function exitDurationMs(velocity: number, reducedMotion: boolean): number {
 }
 
 export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
-  { card, stackIndex, reducedMotion, onCommitted, onExitAnimationComplete, onZoneClick, enterFromExitDirection },
+  {
+    card,
+    stackIndex,
+    reducedMotion,
+    onCommitted,
+    onExitAnimationComplete,
+    onZoneClick,
+    enterFromExitDirection,
+    isPlaying,
+    onTogglePlay
+  },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -169,7 +182,7 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
         </>
       )}
 
-      <div className="flex flex-1 items-center justify-center" style={{ background: 'var(--surface-overlay)' }}>
+      <div className="relative flex flex-1 items-center justify-center" style={{ background: 'var(--surface-overlay)' }}>
         {card.artDataUrl ? (
           <img src={card.artDataUrl} alt="" className="h-full w-full object-cover" draggable={false} />
         ) : (
@@ -179,6 +192,31 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
           >
             {card.artist ? card.artist[0]?.toUpperCase() : '♪'}
           </div>
+        )}
+
+        {isFront && onTogglePlay && !card.previewUnsupported && (
+          <button
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              onTogglePlay()
+            }}
+            className="absolute bottom-3 right-3 z-20 flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-sm transition-opacity hover:opacity-100"
+            style={{ backgroundColor: 'color-mix(in srgb, var(--surface-base) 55%, transparent)', opacity: 0.85 }}
+          >
+            {isPlaying ? (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--text-primary)">
+                <rect x="3" y="2" width="4" height="12" rx="1" />
+                <rect x="9" y="2" width="4" height="12" rx="1" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--text-primary)">
+                <path d="M4 2.5v11a1 1 0 0 0 1.53.85l8.5-5.5a1 1 0 0 0 0-1.7l-8.5-5.5A1 1 0 0 0 4 2.5z" />
+              </svg>
+            )}
+          </button>
         )}
       </div>
 

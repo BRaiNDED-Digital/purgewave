@@ -295,7 +295,11 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
         </div>
       )}
 
-      <div className="relative h-[520px] w-full max-w-md">
+      {/* overflow-hidden: a card mid-exit translates to ~1.4x viewport width via a raw
+          transform, well past this container's bounds — without clipping here, the browser
+          grows the document's scrollable area to fit it and a scrollbar flashes in and out
+          for the duration of every exit animation. */}
+      <div className="relative h-[520px] w-full max-w-md overflow-hidden">
         {/*
          * Stack cards and exiting cards are merged into ONE array and mapped in a single pass —
          * not two separate `{a.map()}{b.map()}` expressions — because React reconciles each
@@ -334,6 +338,8 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
               onCommitted={(direction) => commit(id, direction)}
               onExitAnimationComplete={() => setExiting((e) => e.filter((x) => x.id !== id))}
               onZoneClick={isExiting ? () => {} : handleZoneClick}
+              isPlaying={!isExiting && stackIndex === 0 ? audio.isPlaying : false}
+              onTogglePlay={!isExiting && stackIndex === 0 ? audio.togglePlayPause : undefined}
             />
           )
         })}

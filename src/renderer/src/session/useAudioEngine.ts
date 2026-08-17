@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Card } from '../../../shared/types'
 
 const FADE_IN_MS = 1000
@@ -25,6 +25,7 @@ export interface AudioEngineSettings {
 export interface AudioEngineHandle {
   togglePlayPause: () => void
   replay: () => void
+  isPlaying: boolean
 }
 
 function dbToGain(db: number): number {
@@ -60,6 +61,12 @@ export function useAudioEngine(
   const settingsRef = useRef(settings)
   settingsRef.current = settings
 
+  // Reflects whichever slot is currently active, for the card's play/pause button — updated by
+  // each slot's own play/pause/ended listeners, filtered to only the slot activeIndexRef points
+  // at right now, so the *outgoing* element's pause() call (fired 200ms into every crossfade)
+  // never clobbers this back to false right after the *incoming* element already started.
+  const [isPlaying, setIsPlaying] = useState(false)
+
   function ensureEngine(): [Slot, Slot] {
     if (slotsRef.current) return slotsRef.current
     const ctx = new AudioContext()
@@ -72,7 +79,18 @@ export function useAudioEngine(
       const gain = ctx.createGain()
       gain.gain.value = 0
       source.connect(gain).connect(ctx.destination)
-      return { el, source, gain, preparedFor: null, seekFailed: false }
+      const slot: Slot = { el, source, gain, preparedFor: null, seekFailed: false }
+      const isActiveSlot = (): boolean => slotsRef.current?.[activeIndexRef.current] === slot
+      el.addEventListener('play', () => {
+        if (isActiveSlot()) setIsPlaying(true)
+      })
+      el.addEventListener('pause', () => {
+        if (isActiveSlot()) setIsPlaying(false)
+      })
+      el.addEventListener('ended', () => {
+        if (isActiveSlot()) setIsPlaying(false)
+      })
+      return slot
     }
     const slots: [Slot, Slot] = [makeSlot(), makeSlot()]
     slotsRef.current = slots
@@ -192,9 +210,17 @@ export function useAudioEngine(
       await prepare(incoming, frontCard!)
       if (cancelled) return
 
+      // §6.5 "stop the outgoing track before starting the incoming one — never overlap": fade
+      // the outgoing track out and *wait for that to finish* before the incoming track starts
+      // playing, rather than starting both at once. Starting them simultaneously meant two
+      // tracks were genuinely decoding and mixing at once for the full 200ms fade-out window on
+      // every single swipe — real, audible double audio work at exactly the moment a drag is
+      // most likely to be starting, not just a cosmetic spec deviation.
       if (outgoing !== incoming) {
         fadeGain(outgoing, 0, FADE_OUT_MS)
-        setTimeout(() => outgoing.el.pause(), FADE_OUT_MS)
+        await new Promise<void>((resolve) => setTimeout(resolve, FADE_OUT_MS))
+        outgoing.el.pause()
+        if (cancelled) return
       }
 
       activeIndexRef.current = targetIndex
@@ -266,6 +292,7 @@ export function useAudioEngine(
       const offset = slowStartTracks.has(frontCard.id) ? 0 : frontCard.durationSec * settingsRef.current.previewStartRatio
       active.el.currentTime = offset
       void active.el.play().catch(() => {})
-    }
+    },
+    isPlaying
   }
 }
