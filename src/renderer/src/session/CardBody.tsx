@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Card as CardData } from '../../../shared/types'
 
 interface Props {
@@ -9,6 +9,20 @@ interface Props {
   isFront: boolean
   isPlaying: boolean
   onTogglePlay?: () => void
+}
+
+function MetaBadge({ children }: { children: ReactNode }) {
+  return (
+    <span
+      className="rounded-full px-2 py-0.5 text-[11px] font-medium"
+      style={{
+        backgroundColor: 'color-mix(in srgb, var(--surface-base) 55%, transparent)',
+        color: 'var(--text-secondary)'
+      }}
+    >
+      {children}
+    </span>
+  )
 }
 
 export function formatDuration(seconds: number): string {
@@ -60,6 +74,17 @@ export function CardBody({ card, artworkGradient, aspectRatio, isFront, isPlayin
           {formatDuration(card.durationSec)}
         </span>
 
+        {/* Opposite corner from the duration badge, mirroring it. */}
+        <span
+          className="absolute bottom-3 right-3 z-20 rounded-full px-2 py-0.5 text-xs font-medium backdrop-blur-sm"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--surface-base) 55%, transparent)',
+            color: 'var(--text-primary)'
+          }}
+        >
+          Added {new Date(card.birthtimeMs).toLocaleDateString()}
+        </span>
+
         {isFront && onTogglePlay && !card.previewUnsupported && (
           <button
             aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -78,8 +103,10 @@ export function CardBody({ card, artworkGradient, aspectRatio, isFront, isPlayin
             // plain Tailwind `hover:bg-[...]` class on specificity (it carries an extra `button`
             // type-selector), so a CSS-only hover here would have been silently overridden by
             // that generic rule instead of applying this button's own darker background.
-            className="absolute top-1/2 left-1/2 z-20 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full backdrop-blur-sm"
-            style={{ backgroundColor: `color-mix(in srgb, var(--surface-base) ${playHovered ? 80 : 60}%, transparent)` }}
+            className="absolute top-1/2 left-1/2 z-20 flex aspect-square h-20 w-20 shrink-0 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full backdrop-blur-sm"
+            style={{
+              backgroundColor: `color-mix(in srgb, var(--surface-base) ${playHovered ? 85 : 72}%, transparent)`
+            }}
           >
             {isPlaying ? (
               <svg width="24" height="24" viewBox="0 0 16 16" fill="var(--text-primary)">
@@ -96,7 +123,7 @@ export function CardBody({ card, artworkGradient, aspectRatio, isFront, isPlayin
       </div>
 
       <div
-        className="relative flex flex-col gap-1 p-5"
+        className="relative flex flex-col gap-1 px-5 pt-3 pb-5"
         style={{
           // This is the only place the artwork gradient is actually visible — the artwork box
           // above is opaque and, together with this panel, exactly covers the card's root, so a
@@ -114,7 +141,7 @@ export function CardBody({ card, artworkGradient, aspectRatio, isFront, isPlayin
           WebkitBackdropFilter: artworkGradient ? 'blur(28px) saturate(1.4)' : undefined
         }}
       >
-        <h2 className="truncate text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
+        <h2 className="-mt-0.5 truncate text-2xl leading-tight font-semibold" style={{ color: 'var(--text-primary)' }}>
           {card.title}
           {card.titleIsFilenameFallback && (
             <span className="ml-2 align-middle text-xs font-normal" style={{ color: 'var(--text-muted)' }}>
@@ -122,21 +149,22 @@ export function CardBody({ card, artworkGradient, aspectRatio, isFront, isPlayin
             </span>
           )}
         </h2>
-        <p className="truncate text-lg" style={{ color: 'var(--text-secondary)' }}>
+        <p className="truncate text-lg leading-tight" style={{ color: 'var(--text-secondary)' }}>
           {card.artist || 'Unknown artist'}
         </p>
-        <p className="truncate text-sm" style={{ color: 'var(--text-muted)' }}>
-          {[card.album, card.year].filter(Boolean).join(' · ')}
-        </p>
+        {card.album && (
+          <p className="truncate text-sm leading-tight" style={{ color: 'var(--text-muted)' }}>
+            {card.album}
+          </p>
+        )}
 
-        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-          Added {new Date(card.birthtimeMs).toLocaleDateString()}
-        </p>
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-          {card.format.toUpperCase()}
-          {card.bitrate ? ` · ${Math.round(card.bitrate / 1000)}kbps` : ''} ·{' '}
-          {(card.size / (1024 * 1024)).toFixed(1)} MB
-        </p>
+        <div className="my-1.5 border-t" style={{ borderColor: 'var(--border-subtle)' }} />
+
+        <div className="flex flex-wrap gap-1.5">
+          <MetaBadge>{card.format.toUpperCase()}</MetaBadge>
+          {card.bitrate ? <MetaBadge>{Math.round(card.bitrate / 1000)} kbps</MetaBadge> : null}
+          <MetaBadge>{(card.size / (1024 * 1024)).toFixed(1)} MB</MetaBadge>
+        </div>
 
         {card.previewUnsupported && (
           <p className="mt-1 text-xs" style={{ color: 'var(--discard)' }}>

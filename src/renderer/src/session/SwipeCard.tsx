@@ -3,6 +3,7 @@ import { motion, useMotionValue, useTransform, animate, type PanInfo } from 'fra
 import type { Card as CardData } from '../../../shared/types'
 import { useArtworkGradient } from './useArtworkGradient'
 import { CardBody } from './CardBody'
+import { ArrowGlyph } from './icons'
 
 const COMMIT_DISTANCE_RATIO = 0.35
 const COMMIT_VELOCITY = 500
@@ -24,7 +25,8 @@ interface Props {
   onCommitted: (direction: 'keep' | 'discard') => void
   /** Fires once the exit animation has visually finished, so the parent can unmount it. */
   onExitAnimationComplete: () => void
-  onZoneClick: (zone: 'left' | 'center' | 'right') => void
+  /** A plain (non-drag) click on the card — left mouse button discards, right mouse button keeps. */
+  onCardClick: (button: 'left' | 'right') => void
   /** Set when this mount is an undo restoring the card — it re-enters from the side it left. */
   enterFromExitDirection?: 'keep' | 'discard' | null
   /** Only meaningful (and only rendered) for the true interactive front card. */
@@ -45,7 +47,7 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
     reducedMotion,
     onCommitted,
     onExitAnimationComplete,
-    onZoneClick,
+    onCardClick,
     enterFromExitDirection,
     isPlaying,
     onTogglePlay
@@ -53,9 +55,13 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const { gradient: artworkGradient, aspectRatio } = useArtworkGradient(card.artDataUrl)
+  const { gradient: artworkGradient, aspectRatio, borderColor } = useArtworkGradient(card.artDataUrl)
   const x = useMotionValue(enterFromExitDirection ? (enterFromExitDirection === 'keep' ? 480 : -480) : 0)
-  const opacity = useMotionValue(stackIndex > 0 ? 0 : 1)
+  // Cards behind the front one are fully hidden — no fanned "peek" of their edges, which is what
+  // let a taller upcoming card visibly stick out past the (shorter) front card's bounds. A card
+  // only becomes visible the instant it's promoted to front (stackIndex reaches 0), fading in
+  // while the outgoing front card's own exit animation plays over it.
+  const opacity = useMotionValue(stackIndex === 0 || enterFromExitDirection ? 1 : 0)
   const rotate = useTransform(x, [-320, 320], reducedMotion ? [0, 0] : [-8, 8], { clamp: true })
   // §9.3: fades in beyond ~15% of card width, builds to full intensity near the 35% commit
   // threshold. The card's width is fixed by its `max-w-md` container (~448px) rather than
@@ -63,14 +69,22 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
   const keepOpacity = useTransform(x, [67, 155], [0, 1], { clamp: true })
   const discardOpacity = useTransform(x, [-155, -67], [1, 0], { clamp: true })
 
-  const pointerDown = useRef<{ x: number; y: number; t: number } | null>(null)
+  const pointerDown = useRef<{ x: number; y: number; t: number; button: number } | null>(null)
 
-  // Entry per §9.3: new cards appearing at the back of the stack fade in, no slide/scale. Runs
-  // once on mount only — a card's opacity must not re-fade as it advances toward the front.
+  // A card's own component instance persists across the transition from "stacked behind" to
+  // "front" (see the merged single-.map() comment below), so this tracks whether *this instance*
+  // has already been shown as front once, to fire the fade-in exactly once per promotion rather
+  // than on every render once stackIndex reaches 0.
+  const wasFront = useRef(stackIndex === 0 || !!enterFromExitDirection)
   useEffect(() => {
-    if (stackIndex > 0) void animate(opacity, 1, { duration: reducedMotion ? 0.1 : 0.3 })
+    if (stackIndex === 0 && !wasFront.current) {
+      wasFront.current = true
+      void animate(opacity, 1, { duration: reducedMotion ? 0.1 : 0.28 })
+    } else if (stackIndex > 0) {
+      wasFront.current = false
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [stackIndex])
 
   // Undo per §9.3: reverses the exit — re-enters from the side it left, rotation unwinding
   // (rotate is derived from x, so animating x back to 0 unwinds it for free), on a slightly
@@ -117,9 +131,11 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
   }
 
   function handlePointerDown(e: React.PointerEvent): void {
-    pointerDown.current = { x: e.clientX, y: e.clientY, t: Date.now() }
+    pointerDown.current = { x: e.clientX, y: e.clientY, t: Date.now(), button: e.button }
   }
 
+  // Only two ways to interact with a card: drag it, or a plain (non-drag) click — left mouse
+  // button discards, right mouse button keeps. No more zone-based thirds/center-click.
   function handlePointerUp(e: React.PointerEvent): void {
     const start = pointerDown.current
     pointerDown.current = null
@@ -130,11 +146,8 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
     const dt = Date.now() - start.t
     if (dx > 5 || dy > 5 || dt > 250) return // a drag that snaps back is not a click
 
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const relativeX = (e.clientX - rect.left) / rect.width
-    const zone = relativeX < 1 / 3 ? 'left' : relativeX > 2 / 3 ? 'right' : 'center'
-    onZoneClick(zone)
+    if (start.button === 0) onCardClick('left')
+    else if (start.button === 2) onCardClick('right')
   }
 
   // Stack position 0 = interactive front card, negative = mid-exit (still uses the same x/rotate
@@ -164,7 +177,7 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
         // artwork-derived gradient is painted directly on the text panel instead, which is the
         // only place it can be seen at all.
         background: 'var(--surface-raised)',
-        borderColor: 'var(--border-subtle)',
+        borderColor: borderColor ?? 'var(--border-subtle)',
         touchAction: 'none',
         pointerEvents: isFront ? 'auto' : 'none'
       }}
@@ -178,20 +191,31 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
       onDragEnd={handleDragEnd}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
+      onContextMenu={(e) => e.preventDefault()}
       data-testid="swipe-card"
     >
       {isFront && (
         <>
+          {/* Drag-direction hints: fade in with the same colored panels as the drag progresses,
+              per §9.3's intent-feedback thresholds — a text label + arrow, not just a color wash. */}
           <motion.div
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 right-0 z-10 w-1/3"
+            className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-1/3 items-center justify-end pr-4"
             style={{ opacity: keepOpacity, background: 'linear-gradient(to left, var(--keep), transparent)' }}
-          />
+          >
+            <span className="flex items-center gap-1 text-sm font-semibold text-white">
+              Keep <ArrowGlyph direction="right" />
+            </span>
+          </motion.div>
           <motion.div
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 left-0 z-10 w-1/3"
+            className="pointer-events-none absolute inset-y-0 left-0 z-10 flex w-1/3 items-center justify-start pl-4"
             style={{ opacity: discardOpacity, background: 'linear-gradient(to right, var(--discard), transparent)' }}
-          />
+          >
+            <span className="flex items-center gap-1 text-sm font-semibold text-white">
+              <ArrowGlyph direction="left" /> Discard
+            </span>
+          </motion.div>
         </>
       )}
 

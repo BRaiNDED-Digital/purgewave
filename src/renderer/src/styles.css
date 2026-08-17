@@ -25,6 +25,11 @@
   --accent: #b5502f;
   --keep: #2f6d4f;
   --discard: #b5502f;
+  /* Text color for content painted directly on a solid --accent fill (the "Start session" CTA) —
+     a separate token because --accent itself is too different in luminance between the two
+     themes (dark bg in light mode, light bg in dark mode) for one text color to hit AA in both;
+     checked with the same relative-luminance script as the rest of this file. */
+  --accent-contrast: #fdfaf5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -39,6 +44,7 @@
     --accent: #e08a5f;
     --keep: #5fbb8e;
     --discard: #e0725f;
+    --accent-contrast: #16151a;
   }
 }
 
@@ -53,6 +59,7 @@
   --accent: #e08a5f;
   --keep: #5fbb8e;
   --discard: #e0725f;
+  --accent-contrast: #16151a;
 }
 
 body {

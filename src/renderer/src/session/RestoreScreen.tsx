@@ -82,7 +82,7 @@ export function RestoreScreen({ onDone }: Props) {
   return (
     <div className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 p-6">
       <h2 className="text-xl font-semibold" style={{ color: 'var(--text-primary)' }}>
-        Restore moved files ({tracks.length})
+        Quarantine ({tracks.length})
       </h2>
       <ul className="flex flex-col gap-1">
         {tracks.map((t) => (

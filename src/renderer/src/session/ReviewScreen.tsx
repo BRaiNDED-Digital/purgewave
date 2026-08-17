@@ -28,6 +28,8 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
   const [result, setResult] = useState<DisposeResult | null>(null)
   const [needsPermanentPrompt, setNeedsPermanentPrompt] = useState<string[] | null>(null)
   const [processing, setProcessing] = useState(false)
+  // Deleting is the higher-stakes list, so it's the tab shown by default.
+  const [activeTab, setActiveTab] = useState<ListName>('delete')
 
   useEffect(() => {
     Promise.all([window.purgewave.getMarked(sessionKeptIds), window.purgewave.getSettings()]).then(
@@ -196,7 +198,7 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 p-6">
+    <div className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 p-6">
       <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
         <div className="flex items-center gap-3">
           <span>Disposal:</span>
@@ -214,61 +216,65 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <h3 className="mb-2 text-sm font-semibold" style={{ color: 'var(--keep)' }}>
-            Keeping ({keep.length})
-          </h3>
-          <ul className="flex flex-col gap-1">
-            {keep.map((t) => (
-              <li
-                key={t.id}
-                className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs"
-                style={{ borderColor: 'var(--border-subtle)' }}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {t.title}
-                  </p>
-                  <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    {t.artist}
-                  </p>
-                </div>
-                <button onClick={() => flip(t.id, 'keep')} className="shrink-0 underline" style={{ color: 'var(--discard)' }}>
-                  Discard instead
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <div className="flex gap-2 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+        {(['delete', 'keep'] as ListName[]).map((tab) => {
+          const active = activeTab === tab
+          const tint = tab === 'delete' ? 'var(--discard)' : 'var(--keep)'
+          const count = tab === 'delete' ? del.length : keep.length
+          return (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className="-mb-px border-b-2 px-1 pb-2 text-sm font-semibold"
+              style={{ borderColor: active ? tint : 'transparent', color: active ? tint : 'var(--text-muted)' }}
+            >
+              {tab === 'delete' ? 'Deleting' : 'Keeping'} ({count})
+              {tab === 'delete' && del.length > 0
+                ? ` — ${formatBytes(del.reduce((s, t) => s + t.size, 0))}`
+                : ''}
+            </button>
+          )
+        })}
+      </div>
 
-        <div>
-          <h3 className="mb-2 text-sm font-semibold" style={{ color: 'var(--discard)' }}>
-            Deleting ({del.length}) — {formatBytes(del.reduce((s, t) => s + t.size, 0))}
-          </h3>
-          <ul className="flex flex-col gap-1">
-            {del.map((t) => (
-              <li
-                key={t.id}
-                className="flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-xs"
-                style={{ borderColor: 'var(--border-subtle)' }}
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>
-                    {t.title}
-                  </p>
-                  <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                    {t.artist}
-                  </p>
-                </div>
+      <ul className="flex flex-col gap-1.5">
+        {(activeTab === 'delete' ? del : keep).map((t) => {
+          const tint = activeTab === 'delete' ? 'var(--discard)' : 'var(--keep)'
+          return (
+            <li
+              key={t.id}
+              className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs"
+              style={{
+                borderColor: `color-mix(in srgb, ${tint} 35%, var(--border-subtle))`,
+                backgroundColor: `color-mix(in srgb, ${tint} 8%, transparent)`
+              }}
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {t.title}
+                </p>
+                <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  {t.artist}
+                </p>
+              </div>
+              {activeTab === 'delete' ? (
                 <button onClick={() => flip(t.id, 'delete')} className="shrink-0 underline" style={{ color: 'var(--keep)' }}>
                   Keep instead
                 </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+              ) : (
+                <button onClick={() => flip(t.id, 'keep')} className="shrink-0 underline" style={{ color: 'var(--discard)' }}>
+                  Discard instead
+                </button>
+              )}
+            </li>
+          )
+        })}
+        {(activeTab === 'delete' ? del : keep).length === 0 && (
+          <li className="py-4 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+            Nothing here.
+          </li>
+        )}
+      </ul>
 
       <div className="flex justify-between border-t pt-4" style={{ borderColor: 'var(--border-subtle)' }}>
         <button onClick={onDone} className="text-sm underline" style={{ color: 'var(--text-muted)' }}>

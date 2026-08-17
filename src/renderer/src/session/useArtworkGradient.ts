@@ -17,9 +17,12 @@ export interface ArtworkVisuals {
   gradient: string | null
   /** width / height, clamped — 1 (square) when there's no artwork or extraction failed. */
   aspectRatio: number
+  /** A muted, semi-transparent tone derived from the artwork, for the card's own border. Null
+   *  when there's no artwork or color extraction failed — callers fall back to the flat token. */
+  borderColor: string | null
 }
 
-const DEFAULT_VISUALS: ArtworkVisuals = { gradient: null, aspectRatio: 1 }
+const DEFAULT_VISUALS: ArtworkVisuals = { gradient: null, aspectRatio: 1, borderColor: null }
 
 function averageRegion(data: Uint8ClampedArray, size: number, x0: number, y0: number, x1: number, y1: number): Rgb {
   let r = 0
@@ -156,6 +159,9 @@ export function useArtworkGradient(dataUrl: string | null): ArtworkVisuals {
         const topLeft = vivify(averageRegion(data, SAMPLE_SIZE, 0, 0, half, half))
         const topRight = vivify(averageRegion(data, SAMPLE_SIZE, half, 0, SAMPLE_SIZE, half))
         const bottom = vivify(averageRegion(data, SAMPLE_SIZE, 0, half, SAMPLE_SIZE, SAMPLE_SIZE))
+        // Whole-image average (not one of the three gradient blobs) so the border reads as the
+        // artwork's overall tone rather than favoring whichever corner it happens to match.
+        const dominant = vivify(averageRegion(data, SAMPLE_SIZE, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE))
 
         // Stop positions are expressed as percentages of whatever box this gradient ends up
         // painted on — currently the text panel itself (see CardBody), not the whole card, so
@@ -167,14 +173,14 @@ export function useArtworkGradient(dataUrl: string | null): ArtworkVisuals {
           `radial-gradient(160% 120% at 50% 100%, ${rgba(bottom, 0.5)}, transparent 75%)`
         ].join(', ')
 
-        const result = { gradient, aspectRatio }
+        const result = { gradient, aspectRatio, borderColor: rgba(dominant, 0.55) }
         visualsCache.set(dataUrl, result)
         if (!cancelled) setVisuals(result)
       } catch {
         // Color extraction is a purely cosmetic enhancement — a decode/canvas failure just falls
-        // back to no gradient, but the aspect ratio (already known from the loaded image) is real
-        // layout information and still worth keeping.
-        const result = { gradient: null, aspectRatio }
+        // back to no gradient/border, but the aspect ratio (already known from the loaded image)
+        // is real layout information and still worth keeping.
+        const result = { gradient: null, aspectRatio, borderColor: null }
         visualsCache.set(dataUrl, result)
         if (!cancelled) setVisuals(result)
       }

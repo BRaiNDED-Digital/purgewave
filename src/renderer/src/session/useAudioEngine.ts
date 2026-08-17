@@ -16,8 +16,8 @@ const SUSPICIOUS_CORRECTION_DB = MAX_CORRECTION_DB - 0.5
 // afford more samples spread further apart than the *fallback* one (`measureAndApplyGain`, which
 // runs while the track is already audible) — more samples spread over more of the track is what
 // actually protects against a single quiet passage skewing the result; one 400ms snapshot doesn't.
-const FALLBACK_SAMPLE_COUNT = 3
-const PRELOAD_SAMPLE_COUNT = 8
+const FALLBACK_SAMPLE_COUNT = 5
+const PRELOAD_SAMPLE_COUNT = 16
 const GAIN_SAMPLE_INTERVAL_MS = 150
 
 interface Slot {
@@ -374,6 +374,22 @@ export function useAudioEngine(
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frontCard?.id])
+
+  // The activate effect above bails out immediately (`if (!frontCard) return`) once the queue is
+  // exhausted and the summary screen appears — which previously meant whatever was still audible
+  // just kept playing indefinitely, since nothing else ever told it to stop. This fades it out and
+  // pauses it the same way a swipe's crossfade would, instead of letting it play on unattended or
+  // cutting it off with a hard click on the eventual unmount.
+  useEffect(() => {
+    if (frontCard) return
+    const slots = slotsRef.current
+    if (!slots) return
+    const active = slots[activeIndexRef.current]
+    if (active.el.paused) return
+    fadeGain(active, 0, FADE_OUT_MS)
+    const timer = setTimeout(() => active.el.pause(), FADE_OUT_MS)
+    return () => clearTimeout(timer)
+  }, [frontCard])
 
   useEffect(() => {
     if (!nextCard) return

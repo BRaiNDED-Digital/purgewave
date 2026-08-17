@@ -10,27 +10,21 @@ export type Intent =
   | 'help'
 
 /**
- * Full §6.4 keyboard mapping. `event.repeat` is checked by the caller before this resolves —
- * holding a key must mark exactly one card. Play/pause, replay, and volume are recognized here
- * so the dispatch plumbing is in place, but have nothing to act on until M5 adds audio.
+ * Keyboard mapping. `event.repeat` is checked by the caller before this resolves — holding a
+ * key must mark exactly one card. Arrow keys and A/D are deliberately not mapped to discard/keep
+ * — the two interaction methods for a decision are dragging the card and left/right mouse click
+ * (see `SwipeCard`'s pointer handlers); `Delete`/`Enter` remain as keyboard equivalents.
  */
 export function resolveKeyIntent(e: KeyboardEvent): Intent | null {
   if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) return 'undo'
 
   switch (e.key) {
-    case 'ArrowLeft':
-    case 'a':
-    case 'A':
     case 'Delete':
       return 'discard'
-    case 'ArrowRight':
-    case 'd':
-    case 'D':
     case 'Enter':
       return 'keep'
     case ' ':
       return 'playPause'
-    case 'ArrowUp':
     case 'r':
     case 'R':
       return 'replay'

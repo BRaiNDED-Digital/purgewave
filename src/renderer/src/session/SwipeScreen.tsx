@@ -4,12 +4,13 @@ import { CardBody } from './CardBody'
 import { useArtworkGradient } from './useArtworkGradient'
 import { resolveKeyIntent, isUndoMouseButton } from './keymap'
 import { useAudioEngine } from './useAudioEngine'
-import type { Card, DecisionEntry, SessionLimit, TrackDecision } from '../../../shared/types'
+import { SettingsScreen } from './SettingsScreen'
+import { GearIcon, MouseGlyph } from './icons'
+import type { Card, DecisionEntry, SessionLimit, Theme, TrackDecision } from '../../../shared/types'
 
 const PREFETCH_WINDOW = 50
 const PREFETCH_LOOKAHEAD = 10
 const UNDO_STACK_DEPTH = 20
-const HINT_KEY = 'purgewave.hintDismissed'
 
 interface UndoEntry {
   id: string
@@ -28,6 +29,7 @@ interface Props {
   queue: string[]
   limit: SessionLimit
   onEndSession: (summary: SessionSummary) => void
+  onThemeChange: (theme: Theme) => void
 }
 
 function useReducedMotion(): boolean {
@@ -43,7 +45,7 @@ function useReducedMotion(): boolean {
   return reduced
 }
 
-export function SwipeScreen({ queue, limit, onEndSession }: Props) {
+export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [windowEnd, setWindowEnd] = useState(0)
   const [cards, setCards] = useState<Map<string, Card>>(new Map())
@@ -53,8 +55,8 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
   const [keptIds, setKeptIds] = useState<string[]>([])
   const [marked, setMarked] = useState(0)
   const kept = keptIds.length
-  const [hintDismissed, setHintDismissed] = useState(() => localStorage.getItem(HINT_KEY) === '1')
   const [showHelp, setShowHelp] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [autoplay, setAutoplay] = useState(true)
   const [normalize, setNormalize] = useState(true)
   const [volume, setVolume] = useState(0.8)
@@ -88,6 +90,20 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
   useEffect(() => {
     if (settingsLoaded.current) window.purgewave.updateSettings({ volume })
   }, [volume])
+
+  // The embedded Settings modal (below) is the real SettingsScreen and writes straight to
+  // settings.json via its own IPC calls — it doesn't share this component's local state, so
+  // closing it re-reads whatever changed (autoplay/normalize/volume/side-click) back into the
+  // values this screen's own audio engine and click handling actually use.
+  const closeSettings = useCallback(() => {
+    setShowSettings(false)
+    window.purgewave.getSettings().then((s) => {
+      setAutoplay(s.autoplay)
+      setNormalize(s.normalizeVolume)
+      setVolume(s.volume)
+      setSideClickDecisions(s.sideClickDecisions)
+    })
+  }, [])
 
   const frontCard = cards.get(queue[currentIndex]) ?? null
   const nextCard = cards.get(queue[currentIndex + 1]) ?? null
@@ -186,9 +202,13 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
       e.preventDefault()
 
       if (intent === 'help') return setShowHelp((v) => !v)
-      // Nothing else fires while the help overlay is open, per §6.4 — Escape/`?` just close it.
+      // Nothing else fires while the help or settings overlay is open — Escape/`?` just close it.
       if (showHelp) {
         if (intent === 'endSession') setShowHelp(false)
+        return
+      }
+      if (showSettings) {
+        if (intent === 'endSession') closeSettings()
         return
       }
 
@@ -213,20 +233,16 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [undo, endSession, audio, showHelp])
+  }, [undo, endSession, audio, showHelp, showSettings, closeSettings])
 
-  function handleZoneClick(zone: 'left' | 'center' | 'right'): void {
+  // Only two ways to interact with a card: drag it, or a plain left/right click (§8 "Side-click
+  // decisions" gates whether a click decides anything at all — the dedicated play/pause button on
+  // the card handles play/pause now, so there's no center-click fallback to gate separately).
+  function handleCardClick(button: 'left' | 'right'): void {
+    if (!sideClickDecisions) return
     const id = frontIdRef.current
     if (!id) return
-    // §8 "Side-click decisions": off leaves the whole card as play/pause only.
-    if (!sideClickDecisions || zone === 'center') return audio.togglePlayPause()
-    if (zone === 'left') cardRefs.current.get(id)?.exit('discard')
-    else cardRefs.current.get(id)?.exit('keep')
-  }
-
-  function dismissHint(): void {
-    localStorage.setItem(HINT_KEY, '1')
-    setHintDismissed(true)
+    cardRefs.current.get(id)?.exit(button === 'left' ? 'discard' : 'keep')
   }
 
   const stackIds = useMemo(() => queue.slice(currentIndex, currentIndex + 3), [queue, currentIndex])
@@ -273,14 +289,6 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
 
         <div className="flex w-full items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
           <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={autoplay} onChange={(e) => setAutoplay(e.target.checked)} />
-            Autoplay
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />
-            Normalize volume
-          </label>
-          <label className="flex items-center gap-1.5">
             Volume
             <input
               type="range"
@@ -291,19 +299,20 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
               onChange={(e) => setVolume(Number(e.target.value))}
             />
           </label>
-        </div>
-
-        {!hintDismissed && (
-          <div
-            className="flex w-full items-center justify-between rounded-lg border px-4 py-2 text-xs"
-            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
-          >
-            <span>← discard · → keep · Ctrl+Z / Backspace undo · Esc end session · ? for all shortcuts</span>
-            <button onClick={dismissHint} aria-label="Dismiss hint" style={{ color: 'var(--text-muted)' }}>
-              ✕
+          <div className="flex items-center gap-3">
+            <button onClick={endSession} className="underline" style={{ color: 'var(--text-muted)' }}>
+              End session
+            </button>
+            <button
+              onClick={() => setShowSettings(true)}
+              aria-label="Settings"
+              className="flex items-center justify-center rounded-full border"
+              style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)', width: 26, height: 26 }}
+            >
+              <GearIcon size={14} />
             </button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* This wrapper soaks up all the leftover vertical space so the card stack sits centered
@@ -369,7 +378,7 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
                 enterFromExitDirection={!isExiting && lastUndone?.id === id ? lastUndone.direction : null}
                 onCommitted={(direction) => commit(id, direction)}
                 onExitAnimationComplete={() => setExiting((e) => e.filter((x) => x.id !== id))}
-                onZoneClick={isExiting ? () => {} : handleZoneClick}
+                onCardClick={isExiting ? () => {} : handleCardClick}
                 isPlaying={!isExiting && stackIndex === 0 ? audio.isPlaying : false}
                 onTogglePlay={!isExiting && stackIndex === 0 ? audio.togglePlayPause : undefined}
               />
@@ -379,13 +388,10 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
       </div>
 
       <div className="flex w-full max-w-md items-center justify-between">
-        <button
-          onClick={() => handleZoneClick('left')}
-          className="rounded-xl border px-5 py-3 font-medium"
-          style={{ borderColor: 'var(--discard)', color: 'var(--discard)' }}
-        >
-          Discard
-        </button>
+        <div className="flex items-center gap-2" style={{ color: 'var(--discard)' }}>
+          <MouseGlyph side="left" />
+          <span className="text-sm font-medium">Discard</span>
+        </div>
         <button
           onClick={undo}
           disabled={undoStack.length === 0}
@@ -393,9 +399,6 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
           style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
         >
           Undo
-        </button>
-        <button onClick={endSession} className="text-sm underline" style={{ color: 'var(--text-muted)' }}>
-          End session
         </button>
         <button
           onClick={() => setShowHelp(true)}
@@ -405,13 +408,10 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
         >
           ?
         </button>
-        <button
-          onClick={() => handleZoneClick('right')}
-          className="rounded-xl border px-5 py-3 font-medium"
-          style={{ borderColor: 'var(--keep)', color: 'var(--keep)' }}
-        >
-          Keep
-        </button>
+        <div className="flex items-center gap-2" style={{ color: 'var(--keep)' }}>
+          <span className="text-sm font-medium">Keep</span>
+          <MouseGlyph side="right" />
+        </div>
       </div>
 
       {showHelp && (
@@ -430,13 +430,13 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
             </h3>
             <dl className="flex flex-col gap-2 text-sm">
               {[
-                ['Discard', '← · A · Delete · click left third'],
-                ['Keep', '→ · D · Enter · click right third'],
-                ['Play / pause', 'Space · click center third'],
-                ['Replay from start', '↑ · R'],
+                ['Discard', 'Delete · drag left · left click'],
+                ['Keep', 'Enter · drag right · right click'],
+                ['Play / pause', 'Space · play button on card'],
+                ['Replay from start', 'R'],
                 ['Undo', 'Ctrl+Z · Backspace · U · mouse back button'],
                 ['End session', 'Esc'],
-                ['Volume', '+ / − · scroll over volume'],
+                ['Volume', '+ / −'],
                 ['This list', '?']
               ].map(([label, keys]) => (
                 <div key={label} className="flex items-center justify-between gap-4">
@@ -454,6 +454,22 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          style={{ backgroundColor: 'color-mix(in srgb, var(--surface-base) 60%, transparent)' }}
+          onClick={closeSettings}
+        >
+          <div
+            className="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl border shadow-xl"
+            style={{ backgroundColor: 'var(--surface-overlay)', borderColor: 'var(--border-subtle)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <SettingsScreen onDone={closeSettings} onThemeChange={onThemeChange} />
           </div>
         </div>
       )}
