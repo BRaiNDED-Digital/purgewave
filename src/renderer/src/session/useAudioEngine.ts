@@ -6,13 +6,38 @@ const FADE_OUT_MS = 200
 const SLOW_PREPARE_MS = 400
 const TARGET_LOUDNESS_DB = -18
 const MAX_CORRECTION_DB = 12
+// A correction this close to the clamp is more likely a bad one-sample read (a quiet intro, a
+// silent gap) than a track that's genuinely 11.5+ dB off target — real ReplayGain tags and sane
+// measurements rarely land exactly at the edge of the allowed range. Treated as untrustworthy so
+// it gets re-measured rather than trusted forever once cached; see `isTrustworthyCorrection`.
+const SUSPICIOUS_CORRECTION_DB = MAX_CORRECTION_DB - 0.5
+// How many RMS snapshots go into one measurement, and how far apart. The *preloaded* measurement
+// (see `preloadNormalization`) runs silently, a full card ahead of when it's needed, so it can
+// afford more samples spread further apart than the *fallback* one (`measureAndApplyGain`, which
+// runs while the track is already audible) — more samples spread over more of the track is what
+// actually protects against a single quiet passage skewing the result; one 400ms snapshot doesn't.
+const FALLBACK_SAMPLE_COUNT = 3
+const PRELOAD_SAMPLE_COUNT = 8
+const GAIN_SAMPLE_INTERVAL_MS = 150
 
 interface Slot {
   el: HTMLAudioElement
   source: MediaElementAudioSourceNode
   gain: GainNode
+  analyser: AnalyserNode
   preparedFor: string | null
   seekFailed: boolean
+  // Set by `preloadNormalization` once it has silently measured a *standby* (not-yet-audible)
+  // track's loudness ahead of time, so `activate()` can apply the correction from the first
+  // audible instant instead of starting at raw gain and only correcting a beat later. Null until
+  // measured; cleared whenever the slot moves on to preparing a different track.
+  pendingGainDb: number | null
+  // The correction (dB) actually in effect on this slot right now — from a tag, a preload
+  // measurement, or a post-hoc mid-playback measurement, whichever applied. Live volume changes
+  // read this directly rather than recomputing from `card.replayGainDb`, which stays `null` in
+  // the React `card` prop for the lifetime of this play (the measured value only reaches that
+  // prop on a future `getCards()` refetch) — see the volume-slider effect below.
+  appliedCorrectionDb: number
 }
 
 export interface AudioEngineSettings {
@@ -79,7 +104,29 @@ export function useAudioEngine(
       const gain = ctx.createGain()
       gain.gain.value = 0
       source.connect(gain).connect(ctx.destination)
-      const slot: Slot = { el, source, gain, preparedFor: null, seekFailed: false }
+      // A Web Audio node that has no path to the destination is never actually processed by the
+      // engine — an AnalyserNode connected only *from* the source (with nothing connected out of
+      // it) silently sits idle and getFloatTimeDomainData() reads back zeros forever. Routing it
+      // through its own silent (gain 0) node into the destination keeps it "live" in the render
+      // graph without adding any audible signal. This was the reason RMS-based normalization for
+      // untagged tracks never actually applied any correction — `rms <= 0` on every measurement,
+      // so `measureAndApplyGain` returned early and no gain adjustment (or cached replayGainDb)
+      // was ever produced.
+      const analyser = ctx.createAnalyser()
+      analyser.fftSize = 2048
+      const analyserSink = ctx.createGain()
+      analyserSink.gain.value = 0
+      source.connect(analyser).connect(analyserSink).connect(ctx.destination)
+      const slot: Slot = {
+        el,
+        source,
+        gain,
+        analyser,
+        preparedFor: null,
+        seekFailed: false,
+        pendingGainDb: null,
+        appliedCorrectionDb: 0
+      }
       const isActiveSlot = (): boolean => slotsRef.current?.[activeIndexRef.current] === slot
       el.addEventListener('play', () => {
         if (isActiveSlot()) setIsPlaying(true)
@@ -97,32 +144,100 @@ export function useAudioEngine(
     return slots
   }
 
+  // A cached value this close to the clamp boundary is treated as unproven rather than final —
+  // see the `SUSPICIOUS_CORRECTION_DB` comment above. `null` (never measured, no tag) is also
+  // "not trustworthy" in the sense that it needs measuring, but is reported separately by callers
+  // since it's not actually suspicious, just absent.
+  function isTrustworthyCorrection(db: number | null): db is number {
+    return db !== null && Math.abs(db) < SUSPICIOUS_CORRECTION_DB
+  }
+
+  // Measures RMS across several snapshots spread over the analyser and returns a clamped
+  // correction from their *median* (not a single reading), or null if nothing usable was
+  // measured (silence, no context) — a lone quiet passage or transient can badly skew one sample,
+  // but is very unlikely to dominate the median of several spread across a few hundred ms to over
+  // a second. Pure — has no opinion on which slot/card it's for or what to do with the result;
+  // both the preload path and the post-hoc fallback path share it.
+  async function measureCorrectionDb(slot: Slot, sampleCount: number): Promise<number | null> {
+    const ctx = ctxRef.current
+    if (!ctx) return null
+    const buffer = new Float32Array(slot.analyser.fftSize)
+    const readings: number[] = []
+
+    for (let i = 0; i < sampleCount; i++) {
+      await new Promise((resolve) => setTimeout(resolve, GAIN_SAMPLE_INTERVAL_MS))
+      slot.analyser.getFloatTimeDomainData(buffer)
+      let sumSquares = 0
+      for (const sample of buffer) sumSquares += sample * sample
+      const rms = Math.sqrt(sumSquares / buffer.length)
+      if (rms > 0) readings.push(20 * Math.log10(rms))
+    }
+    if (readings.length === 0) return null
+
+    readings.sort((a, b) => a - b)
+    const measuredDb = readings[Math.floor(readings.length / 2)]
+    return Math.max(-MAX_CORRECTION_DB, Math.min(MAX_CORRECTION_DB, TARGET_LOUDNESS_DB - measuredDb))
+  }
+
+  // Fallback path only: measures loudness *while the track is already audible* and re-targets the
+  // gain ramp mid-flight. Only reached when `activate()` didn't already have a preloaded
+  // correction ready (see `preloadNormalization` below) — e.g. a swipe fast enough to outrun the
+  // one-card-ahead prefetch window — so there's a brief moment of unnormalized volume before this
+  // lands. The normal case avoids that entirely.
   async function measureAndApplyGain(slot: Slot, card: Card, baseGain: number): Promise<void> {
-    if (!settingsRef.current.normalize || card.replayGainDb !== null) return
+    if (!settingsRef.current.normalize || isTrustworthyCorrection(card.replayGainDb)) return
+    const correctionDb = await measureCorrectionDb(slot, FALLBACK_SAMPLE_COUNT)
+    if (correctionDb === null) return
     const ctx = ctxRef.current
     if (!ctx) return
 
-    const analyser = ctx.createAnalyser()
-    analyser.fftSize = 2048
-    slot.source.connect(analyser)
-    const buffer = new Float32Array(analyser.fftSize)
-
-    await new Promise((resolve) => setTimeout(resolve, SLOW_PREPARE_MS))
-    analyser.getFloatTimeDomainData(buffer)
-    slot.source.disconnect(analyser)
-
-    let sumSquares = 0
-    for (const sample of buffer) sumSquares += sample * sample
-    const rms = Math.sqrt(sumSquares / buffer.length)
-    if (rms <= 0) return
-
-    const measuredDb = 20 * Math.log10(rms)
-    const correctionDb = Math.max(-MAX_CORRECTION_DB, Math.min(MAX_CORRECTION_DB, TARGET_LOUDNESS_DB - measuredDb))
-
     const now = ctx.currentTime
     slot.gain.gain.cancelScheduledValues(now)
+    slot.gain.gain.setValueAtTime(slot.gain.gain.value, now)
     slot.gain.gain.linearRampToValueAtTime(baseGain * dbToGain(correctionDb), now + (FADE_IN_MS / 1000) * 0.4)
+    slot.appliedCorrectionDb = correctionDb
 
+    window.purgewave.cacheGain(card.id, correctionDb)
+  }
+
+  // Runs while a card is still just the *standby*/next-up track — silent, since the standby
+  // slot's gain stays at 0 until `activate()` ping-pongs onto it — so that by the time this track
+  // actually becomes the front card, its correction is already known and gets applied from gain
+  // ramp-up's very first instant. Without this, normalization for an untagged track could only
+  // ever be measured *after* the track was already audible, producing a brief moment of raw
+  // (un-normalized) volume on every single swipe to an untagged track.
+  async function preloadNormalization(slot: Slot, card: Card): Promise<void> {
+    if (!settingsRef.current.normalize || isTrustworthyCorrection(card.replayGainDb) || card.previewUnsupported) return
+    if (slot.preparedFor !== card.id || slot.pendingGainDb !== null) return
+
+    const savedTime = slot.el.currentTime
+    try {
+      await slot.el.play()
+    } catch {
+      return // silent play can fail under stricter autoplay policies; just skip the preload
+    }
+    // This path is hidden (silent, ahead of when the track is actually needed), so it can afford
+    // far more samples spread over a much longer stretch than the fallback path can — that's what
+    // actually makes the median resistant to a quiet intro or a sparse passage skewing it. It can
+    // take over a second, though, which is long enough that the user may have already swiped to
+    // this exact card while it was running — `activate()` promotes a slot to real, audible
+    // playback without waiting on this function, so that's a normal outcome, not an error.
+    const correctionDb = await measureCorrectionDb(slot, PRELOAD_SAMPLE_COUNT)
+
+    // If this slot is now the truly active (audible) one, `activate()` got there first — pausing
+    // and rewinding it here would yank the front card's real playback backwards mid-listen. Bail
+    // entirely rather than touch it: `activate()` already found no preloaded correction ready at
+    // the time it ran, so it will have started its own concurrent `measureAndApplyGain` fallback
+    // on this same slot, which owns applying/caching the correction from here on.
+    if (slotsRef.current?.[activeIndexRef.current] === slot) return
+
+    slot.el.pause()
+    slot.el.currentTime = savedTime // undo the time this silent priming play advanced
+
+    // The slot may have moved on to a different card while the above awaits were in flight —
+    // don't attach a stale measurement to whatever it's preparing now.
+    if (slot.preparedFor !== card.id || correctionDb === null) return
+    slot.pendingGainDb = correctionDb
     window.purgewave.cacheGain(card.id, correctionDb)
   }
 
@@ -130,6 +245,7 @@ export function useAudioEngine(
     if (slot.preparedFor === card.id) return
     slot.preparedFor = card.id
     slot.seekFailed = false
+    slot.pendingGainDb = null
 
     if (card.previewUnsupported) return
 
@@ -227,13 +343,28 @@ export function useAudioEngine(
       incoming.el.muted = false
 
       const baseGain = settingsRef.current.volume
-      const gainAdjustDb = settingsRef.current.normalize && frontCard!.replayGainDb !== null ? frontCard!.replayGainDb : 0
+      // Prefer, in order: a trustworthy tag/cached value — exact and free (see
+      // `isTrustworthyCorrection`: a value sitting right at the clamp boundary is treated as an
+      // unproven one-off, not final, and re-measured instead of trusted forever). A preloaded
+      // measurement — taken silently while this track was still just the standby, one card ahead
+      // — the normal case for an untagged track. Only when neither is available (this card became
+      // front faster than the one-card-ahead prefetch could measure it) does gain start
+      // unadjusted and get corrected a beat later by the `measureAndApplyGain` fallback below.
+      const trustworthyTag = isTrustworthyCorrection(frontCard!.replayGainDb)
+      const hasCorrection = trustworthyTag || incoming.pendingGainDb !== null
+      const correctionDb = trustworthyTag ? frontCard!.replayGainDb! : (incoming.pendingGainDb ?? 0)
+      incoming.pendingGainDb = null
+      const gainAdjustDb = settingsRef.current.normalize ? correctionDb : 0
+      incoming.appliedCorrectionDb = gainAdjustDb
       const target = baseGain * dbToGain(gainAdjustDb)
 
       if (!frontCard!.previewUnsupported && settingsRef.current.autoplay) {
         void incoming.el.play().catch(() => {})
         fadeGain(incoming, target, FADE_IN_MS)
-        void measureAndApplyGain(incoming, frontCard!, baseGain)
+        // Fallback path only — skipped when a tag or a preloaded measurement already covered it.
+        if (settingsRef.current.normalize && !hasCorrection) {
+          void measureAndApplyGain(incoming, frontCard!, baseGain)
+        }
       }
     }
 
@@ -252,21 +383,31 @@ export function useAudioEngine(
     // must reflect which slot the *current* front card claimed, even before its own activation
     // has finished, or this can prefetch onto the slot that's still mid-activation.
     const standby = slots[1 - assignedIndexRef.current]
-    void prepare(standby, nextCard)
+    void prepare(standby, nextCard).then(() => preloadNormalization(standby, nextCard))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextCard?.id])
 
   // Live volume changes re-target the active element's gain (not a fade — an immediate but
-  // click-free ramp), never the passive HTMLMediaElement.volume, which the GainNode replaces.
+  // click-free ramp), never the passive HTMLMediaElement.volume, which the GainNode replaces. The
+  // volume slider is a *relative* multiplier on top of whatever correction is already in effect —
+  // reads `active.appliedCorrectionDb` (set once in `activate()`/`measureAndApplyGain`, whichever
+  // last touched this slot), not `card.replayGainDb`. That field stays `null` in this component's
+  // own `card` prop for an untagged track's entire playback (a measurement updates library.json
+  // and this slot, not the prop React is holding), so recomputing from it here used to silently
+  // throw away a live measured correction and jump back to raw, un-normalized volume the instant
+  // the slider moved — heard as some untagged tracks suddenly playing very loud after a volume
+  // adjustment.
   useEffect(() => {
     const slots = slotsRef.current
     const card = frontCard
     if (!slots || !card || card.previewUnsupported) return
     const active = slots[activeIndexRef.current]
-    const gainAdjustDb = settings.normalize && card.replayGainDb !== null ? card.replayGainDb : 0
-    fadeGain(active, settings.volume * dbToGain(gainAdjustDb), 60)
+    fadeGain(active, settings.volume * dbToGain(settings.normalize ? active.appliedCorrectionDb : 0), 60)
+    // Also re-applies when `normalize` itself is toggled mid-playback (the Settings checkbox is
+    // reachable during an active session), so switching it off immediately drops back to raw
+    // volume instead of waiting for the next swipe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.volume])
+  }, [settings.volume, settings.normalize])
 
   // True unmount only (leaving the swipe screen entirely) — tears down the whole audio graph.
   useEffect(() => {

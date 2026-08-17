@@ -61,8 +61,10 @@ function resolveBackgroundColor(): string {
 
 function createWindow(): void {
   const win = new BrowserWindow({
-    width: 1100,
-    height: 800,
+    width: 1360,
+    height: 940,
+    minWidth: 900,
+    minHeight: 700,
     show: false,
     autoHideMenuBar: true,
     // §9.1 "no flash on launch": set before first paint so there's no white blink on a

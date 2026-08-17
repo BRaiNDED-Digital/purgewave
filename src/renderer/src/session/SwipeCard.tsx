@@ -1,6 +1,8 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { motion, useMotionValue, useTransform, animate, type PanInfo } from 'framer-motion'
 import type { Card as CardData } from '../../../shared/types'
+import { useArtworkGradient } from './useArtworkGradient'
+import { CardBody } from './CardBody'
 
 const COMMIT_DISTANCE_RATIO = 0.35
 const COMMIT_VELOCITY = 500
@@ -51,6 +53,7 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const { gradient: artworkGradient, aspectRatio } = useArtworkGradient(card.artDataUrl)
   const x = useMotionValue(enterFromExitDirection ? (enterFromExitDirection === 'keep' ? 480 : -480) : 0)
   const opacity = useMotionValue(stackIndex > 0 ? 0 : 1)
   const rotate = useTransform(x, [-320, 320], reducedMotion ? [0, 0] : [-8, 8], { clamp: true })
@@ -145,12 +148,22 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
   return (
     <motion.div
       ref={containerRef}
-      className="absolute inset-0 flex flex-col overflow-hidden rounded-2xl border shadow-xl"
+      // `inset-x-0 top-0` rather than `inset-0`: no `bottom`, so height is intrinsic (driven by
+      // CardBody's own aspect-ratio artwork box + natural text content) instead of stretched to
+      // match the stack container. The container itself gets its height from SwipeScreen's
+      // invisible sizer clone of the *front* card — see the comment there. Stacked-behind cards
+      // may therefore be a few px taller/shorter than that; harmless, since they're layered
+      // behind the (opaque) front card and mostly hidden regardless.
+      className="absolute inset-x-0 top-0 flex flex-col overflow-hidden rounded-2xl border shadow-xl"
       style={{
         x: usesDragPosition ? x : 0,
         rotate: usesDragPosition ? rotate : 0,
         opacity,
-        backgroundColor: 'var(--surface-raised)',
+        // Plain — CardBody's artwork box and text panel between them exactly cover this root's
+        // whole content area (no gaps), so anything painted here is never actually visible. The
+        // artwork-derived gradient is painted directly on the text panel instead, which is the
+        // only place it can be seen at all.
+        background: 'var(--surface-raised)',
         borderColor: 'var(--border-subtle)',
         touchAction: 'none',
         pointerEvents: isFront ? 'auto' : 'none'
@@ -182,88 +195,14 @@ export const SwipeCard = forwardRef<SwipeCardHandle, Props>(function SwipeCard(
         </>
       )}
 
-      <div className="relative flex flex-1 items-center justify-center" style={{ background: 'var(--surface-overlay)' }}>
-        {card.artDataUrl ? (
-          <img src={card.artDataUrl} alt="" className="h-full w-full object-cover" draggable={false} />
-        ) : (
-          <div
-            className="flex h-full w-full items-center justify-center text-6xl font-semibold"
-            style={{ color: 'var(--text-muted)' }}
-          >
-            {card.artist ? card.artist[0]?.toUpperCase() : '♪'}
-          </div>
-        )}
-
-        {isFront && onTogglePlay && !card.previewUnsupported && (
-          <button
-            aria-label={isPlaying ? 'Pause' : 'Play'}
-            onPointerDown={(e) => e.stopPropagation()}
-            onPointerUp={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              onTogglePlay()
-            }}
-            className="absolute bottom-3 right-3 z-20 flex h-11 w-11 items-center justify-center rounded-full backdrop-blur-sm transition-opacity hover:opacity-100"
-            style={{ backgroundColor: 'color-mix(in srgb, var(--surface-base) 55%, transparent)', opacity: 0.85 }}
-          >
-            {isPlaying ? (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--text-primary)">
-                <rect x="3" y="2" width="4" height="12" rx="1" />
-                <rect x="9" y="2" width="4" height="12" rx="1" />
-              </svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--text-primary)">
-                <path d="M4 2.5v11a1 1 0 0 0 1.53.85l8.5-5.5a1 1 0 0 0 0-1.7l-8.5-5.5A1 1 0 0 0 4 2.5z" />
-              </svg>
-            )}
-          </button>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-1 p-5">
-        <h2 className="truncate text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {card.title}
-          {card.titleIsFilenameFallback && (
-            <span className="ml-2 align-middle text-xs font-normal" style={{ color: 'var(--text-muted)' }}>
-              (filename)
-            </span>
-          )}
-        </h2>
-        <p className="truncate text-lg" style={{ color: 'var(--text-secondary)' }}>
-          {card.artist || 'Unknown artist'}
-        </p>
-        <p className="truncate text-sm" style={{ color: 'var(--text-muted)' }}>
-          {[card.album, card.year].filter(Boolean).join(' · ')}
-        </p>
-
-        {card.albumContext && (
-          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-            Track {card.albumContext.index} of {card.albumContext.total} · {card.albumContext.albumName}
-            {card.albumContext.markedForDeletion > 0 &&
-              ` · ${card.albumContext.markedForDeletion} marked for deletion`}
-          </p>
-        )}
-
-        {card.pastReview && (
-          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Last reviewed {new Date(card.pastReview.lastReviewedAt).toLocaleDateString()} · seen{' '}
-            {card.pastReview.reviewCount}×
-          </p>
-        )}
-
-        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-          {card.format.toUpperCase()}
-          {card.bitrate ? ` · ${Math.round(card.bitrate / 1000)}kbps` : ''} ·{' '}
-          {(card.size / (1024 * 1024)).toFixed(1)} MB ·{' '}
-          {new Date(card.birthtimeMs).toLocaleDateString()}
-        </p>
-
-        {card.previewUnsupported && (
-          <p className="mt-1 text-xs" style={{ color: 'var(--discard)' }}>
-            Can&apos;t preview this file — still swipeable.
-          </p>
-        )}
-      </div>
+      <CardBody
+        card={card}
+        artworkGradient={artworkGradient}
+        aspectRatio={aspectRatio}
+        isFront={isFront}
+        isPlaying={isPlaying}
+        onTogglePlay={onTogglePlay}
+      />
     </motion.div>
   )
 })

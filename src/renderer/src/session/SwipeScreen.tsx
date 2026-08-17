@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { SwipeCard } from './SwipeCard'
+import { CardBody } from './CardBody'
+import { useArtworkGradient } from './useArtworkGradient'
 import { resolveKeyIntent, isUndoMouseButton } from './keymap'
 import { useAudioEngine } from './useAudioEngine'
 import type { Card, DecisionEntry, SessionLimit, TrackDecision } from '../../../shared/types'
@@ -90,6 +92,13 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
   const frontCard = cards.get(queue[currentIndex]) ?? null
   const nextCard = cards.get(queue[currentIndex + 1]) ?? null
   const audio = useAudioEngine(frontCard, nextCard, { autoplay, volume, normalize, previewStartRatio })
+  // Every visible SwipeCard is `position: absolute` (so exit/stack animations don't disturb
+  // layout), which means none of them can establish this container's height on their own — an
+  // absolutely positioned box with no `bottom` sizes intrinsically, but its *parent* still needs
+  // a real height for that to resolve against. This invisible, normal-flow clone of the front
+  // card's content is that height reference; it's never seen, only measured by the browser's own
+  // layout engine.
+  const sizerVisuals = useArtworkGradient(frontCard?.artDataUrl ?? null)
 
   // Windowed prefetch (§3.7 rule 2): keep the current window plus the next one loaded, never
   // the whole queue — a 200k-track session would freeze on structured-clone otherwise.
@@ -252,99 +261,121 @@ export function SwipeScreen({ queue, limit, onEndSession }: Props) {
 
   return (
     <div className="flex flex-1 flex-col items-center gap-4 p-6">
-      <div className="flex w-full max-w-md items-center justify-between text-sm" style={{ color: 'var(--text-muted)' }}>
-        <span>
-          {limit ? `${remainingCount} left in this session` : `${currentIndex + 1} of ${queue.length}`}
-        </span>
-        <span>
-          {kept} kept · {marked} marked
-        </span>
-      </div>
-
-      <div className="flex w-full max-w-md items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" checked={autoplay} onChange={(e) => setAutoplay(e.target.checked)} />
-          Autoplay
-        </label>
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />
-          Normalize volume
-        </label>
-        <label className="flex items-center gap-1.5">
-          Volume
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={volume}
-            onChange={(e) => setVolume(Number(e.target.value))}
-          />
-        </label>
-      </div>
-
-      {!hintDismissed && (
-        <div
-          className="flex w-full max-w-md items-center justify-between rounded-lg border px-4 py-2 text-xs"
-          style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
-        >
-          <span>← discard · → keep · Ctrl+Z / Backspace undo · Esc end session · ? for all shortcuts</span>
-          <button onClick={dismissHint} aria-label="Dismiss hint" style={{ color: 'var(--text-muted)' }}>
-            ✕
-          </button>
+      <div className="flex w-full max-w-md flex-col gap-4">
+        <div className="flex w-full items-center justify-between text-sm" style={{ color: 'var(--text-muted)' }}>
+          <span>
+            {limit ? `${remainingCount} left in this session` : `${currentIndex + 1} of ${queue.length}`}
+          </span>
+          <span>
+            {kept} kept · {marked} marked
+          </span>
         </div>
-      )}
 
-      {/* No overflow-hidden here on purpose — this container is exactly card-sized, so clipping
-          at this level cuts the exit animation off right at the card's own edge instead of
-          letting it visually slide and fade across the viewport. The scrollbar this used to
-          cause (a card mid-exit translates ~1.4x viewport width past this container's bounds)
-          is handled once, globally, via `overflow-x: hidden` on body in styles.css instead —
-          that clips only at the true document edge, not the card's local bounding box. */}
-      <div className="relative h-[520px] w-full max-w-md">
-        {/*
-         * Stack cards and exiting cards are merged into ONE array and mapped in a single pass —
-         * not two separate `{a.map()}{b.map()}` expressions — because React reconciles each
-         * `{array.map(...)}` JSX expression as its own independent child-list keyed only within
-         * itself. A card whose key moves from the "stack" expression to the "exiting" expression
-         * across a render (even with an identical key value) does NOT get matched as the same
-         * fiber: React unmounts it from the first list and mounts a brand new instance in the
-         * second, discarding the in-flight drag/exit motion values. That produced the exact bug
-         * this merge fixes — confirmed via CDP trace (mount/unmount logging), not just reasoning:
-         * the committed card's SwipeCard instance actually unmounted and a fresh, static
-         * (opacity 1, x 0, never animating) replacement mounted in its place, permanently
-         * overlaying the newly-promoted front card. A single `.map()` over one combined array
-         * keeps it as one reconciliation context, so the same fiber — and its live x/opacity
-         * motion values mid-animation — survives the stack→exiting transition.
-         */}
-        {[
-          ...stackIds
-            .slice()
-            .reverse()
-            .map((id, revIdx) => ({ id, stackIndex: stackIds.length - 1 - revIdx, exiting: false as const })),
-          ...exiting.map(({ id }) => ({ id, stackIndex: -1, exiting: true as const }))
-        ].map(({ id, stackIndex, exiting: isExiting }) => {
-          const card = cards.get(id)
-          if (!card) return null
-          return (
-            <SwipeCard
-              key={id}
-              ref={(handle) => {
-                if (handle) cardRefs.current.set(id, handle)
-                else cardRefs.current.delete(id)
-              }}
-              card={card}
-              stackIndex={stackIndex}
-              reducedMotion={reducedMotion}
-              enterFromExitDirection={!isExiting && lastUndone?.id === id ? lastUndone.direction : null}
-              onCommitted={(direction) => commit(id, direction)}
-              onExitAnimationComplete={() => setExiting((e) => e.filter((x) => x.id !== id))}
-              onZoneClick={isExiting ? () => {} : handleZoneClick}
-              isPlaying={!isExiting && stackIndex === 0 ? audio.isPlaying : false}
-              onTogglePlay={!isExiting && stackIndex === 0 ? audio.togglePlayPause : undefined}
+        <div className="flex w-full items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={autoplay} onChange={(e) => setAutoplay(e.target.checked)} />
+            Autoplay
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={normalize} onChange={(e) => setNormalize(e.target.checked)} />
+            Normalize volume
+          </label>
+          <label className="flex items-center gap-1.5">
+            Volume
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={volume}
+              onChange={(e) => setVolume(Number(e.target.value))}
             />
-          )
-        })}
+          </label>
+        </div>
+
+        {!hintDismissed && (
+          <div
+            className="flex w-full items-center justify-between rounded-lg border px-4 py-2 text-xs"
+            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
+          >
+            <span>← discard · → keep · Ctrl+Z / Backspace undo · Esc end session · ? for all shortcuts</span>
+            <button onClick={dismissHint} aria-label="Dismiss hint" style={{ color: 'var(--text-muted)' }}>
+              ✕
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* This wrapper soaks up all the leftover vertical space so the card stack sits centered
+          in the window with breathing room above (controls) and below (action buttons), instead
+          of being packed immediately under the header. No overflow-hidden here on purpose — this
+          container is exactly card-sized, so clipping at this level cuts the exit animation off
+          right at the card's own edge instead of letting it visually slide and fade across the
+          viewport. The scrollbar this used to cause (a card mid-exit translates ~1.4x viewport
+          width past this container's bounds) is handled once, globally, via `overflow-x: hidden`
+          on body in styles.css instead — that clips only at the true document edge, not the
+          card's local bounding box. */}
+      <div className="flex w-full flex-1 items-center justify-center">
+        <div className="relative w-full max-w-md">
+          {/* Invisible sizer (see the comment above `sizerVisuals`): normal-flow, so it gives
+              this `relative` container a real height equal to the front card's own natural
+              content height — square artwork, a tall cover, a card with extra optional lines of
+              metadata all grow or shrink this the same way they'd grow or shrink the real card. */}
+          {frontCard && (
+            <div className="invisible flex flex-col overflow-hidden rounded-2xl border" aria-hidden="true">
+              <CardBody
+                card={frontCard}
+                artworkGradient={sizerVisuals.gradient}
+                aspectRatio={sizerVisuals.aspectRatio}
+                isFront={false}
+                isPlaying={false}
+              />
+            </div>
+          )}
+          {/*
+           * Stack cards and exiting cards are merged into ONE array and mapped in a single pass —
+           * not two separate `{a.map()}{b.map()}` expressions — because React reconciles each
+           * `{array.map(...)}` JSX expression as its own independent child-list keyed only within
+           * itself. A card whose key moves from the "stack" expression to the "exiting" expression
+           * across a render (even with an identical key value) does NOT get matched as the same
+           * fiber: React unmounts it from the first list and mounts a brand new instance in the
+           * second, discarding the in-flight drag/exit motion values. That produced the exact bug
+           * this merge fixes — confirmed via CDP trace (mount/unmount logging), not just reasoning:
+           * the committed card's SwipeCard instance actually unmounted and a fresh, static
+           * (opacity 1, x 0, never animating) replacement mounted in its place, permanently
+           * overlaying the newly-promoted front card. A single `.map()` over one combined array
+           * keeps it as one reconciliation context, so the same fiber — and its live x/opacity
+           * motion values mid-animation — survives the stack→exiting transition.
+           */}
+          {[
+            ...stackIds
+              .slice()
+              .reverse()
+              .map((id, revIdx) => ({ id, stackIndex: stackIds.length - 1 - revIdx, exiting: false as const })),
+            ...exiting.map(({ id }) => ({ id, stackIndex: -1, exiting: true as const }))
+          ].map(({ id, stackIndex, exiting: isExiting }) => {
+            const card = cards.get(id)
+            if (!card) return null
+            return (
+              <SwipeCard
+                key={id}
+                ref={(handle) => {
+                  if (handle) cardRefs.current.set(id, handle)
+                  else cardRefs.current.delete(id)
+                }}
+                card={card}
+                stackIndex={stackIndex}
+                reducedMotion={reducedMotion}
+                enterFromExitDirection={!isExiting && lastUndone?.id === id ? lastUndone.direction : null}
+                onCommitted={(direction) => commit(id, direction)}
+                onExitAnimationComplete={() => setExiting((e) => e.filter((x) => x.id !== id))}
+                onZoneClick={isExiting ? () => {} : handleZoneClick}
+                isPlaying={!isExiting && stackIndex === 0 ? audio.isPlaying : false}
+                onTogglePlay={!isExiting && stackIndex === 0 ? audio.togglePlayPause : undefined}
+              />
+            )
+          })}
+        </div>
       </div>
 
       <div className="flex w-full max-w-md items-center justify-between">

@@ -1,0 +1,94 @@
+# llms.txt — PurgeWave file finder
+
+Task-oriented index: "I need to change X" → the file(s) to open. Not a description of what the
+code does (see `arch.md` for structure, `CLAUDE.md` for narrative/gotchas, `purgewave-spec.md`
+for requirements). Line numbers are approximate anchors, not guarantees — re-grep if a file has
+moved on since this was written.
+
+## Source of truth docs (read first, in this order)
+- `purgewave-spec.md` — requirements + acceptance criteria (§ numbers referenced everywhere else)
+- `CLAUDE.md` — build log: real bugs found, spec tensions resolved, verification notes
+- `arch.md` — structural map: process split, data flow, module boundaries
+- `src/shared/types.ts` — every shared type (`Track`, `Card`, `DecisionEntry`, `Settings`, `LibraryFile`, `DecisionsFile`, IPC payload shapes). Start here for "what fields exist on X".
+
+## IPC contract (renderer ⟷ main)
+- `src/preload/index.ts` — the whole `window.purgewave` API surface, one function per IPC channel. Start here to see every channel name at a glance.
+- `src/main/index.ts:91-338` — `registerIpcHandlers()`, one `ipcMain.handle` per channel, same order as preload.
+- `src/main/index.ts:44-46` — the three module-level singletons (`library`, `decisionsStore`, `settings`) every handler closes over.
+- `src/renderer/src/env.d.ts` — ambient `window.purgewave` typing for the renderer.
+
+## Scanning & the music library
+- `src/main/library/walk.ts` — fs tree walk, excludes the quarantine folder even if nested inside the root.
+- `src/main/library/readTrack.ts` — tag reading via `music-metadata` (dynamic `import()`, it's ESM-only — see comment at top).
+- `src/main/library/fingerprint.ts` — `fp` computation (mid-file SHA-1 + size + duration).
+- `src/main/library/artwork.ts` — extract + cache artwork as `art/<fp>.webp` via `sharp`; `resolveArtDataUrl` turns a cached path into a base64 `data:` URI for IPC.
+- `src/main/library/scan.ts:47` — `scanLibrary()`, the orchestrator: walk → 4-worker pool → reconcile → return result. Change-detection skip (unchanged `size`+`mtimeMs` skips tag re-read) lives here.
+- `src/main/library/reconcile.test.ts` — every named status-transition scenario from spec §3.5/M3; read this before touching `reconcile.ts` to see what must keep passing.
+- `src/main/library/reconcile.ts:44` — `reconcile()`, pure merge of previous state + fresh scan by fingerprint. Missing/dormant/duplicate-fingerprint handling all here.
+- `src/main/library/extensions.ts` — the audio file extension allowlist.
+
+## Queue ordering & cards
+- `src/main/library/queue.ts:10` — `buildQueue()`, the two-pass ordering (spec §5.1): unreviewed by `birthtimeMs`, then previously-kept by `reviewedAt`.
+- `src/main/library/queue.test.ts` — ordering + exclusion assertions.
+- `src/main/library/cards.ts:9` — `buildCard()`, assembles a `Card` from `Track` + `folders` + decisions (album context, past-review info). Everything a card needs must be precomputable here — no fs reads at display time.
+- `src/main/library/cards.test.ts`
+
+## Swipe session UI
+- `src/renderer/src/session/SwipeScreen.tsx:46` — `SwipeScreen()`, the session state machine: `currentIndex` vs. the separate `exiting` list, undo stack (capped 20, mirrored into `undoStackRef` for the StrictMode double-invoke fix — see CLAUDE.md), settings sync effects.
+- `src/renderer/src/session/SwipeCard.tsx:41` — `SwipeCard`, pointer-drag physics (Framer Motion), exit animation, intent-feedback opacity ramp, play/pause button.
+- `src/renderer/src/session/CardBody.tsx:34` — `CardBody()`, static card layout/typography (title/artist/album/year/format/duration). `formatDuration()` also here.
+- `src/renderer/src/session/useArtworkGradient.ts:123` — `useArtworkGradient()`, derives card background gradient from artwork's dominant colors.
+- `src/renderer/src/session/keymap.ts:17` — `resolveKeyIntent()`, every keyboard binding including `?` for help. `isUndoMouseButton()` for mouse-button undo.
+- `src/renderer/src/session/SessionLengthPicker.tsx` — session-length picker screen + `getLastSessionLimit()` (localStorage-remembered last choice).
+
+## Audio preview
+- `src/main/protocol/trackProtocol.ts:28` — `registerTrackProtocolHandler()`, the `track://<id>` custom protocol with HTTP Range support. Registration (`protocol.registerSchemesAsPrivileged`) happens at module load in `index.ts:40-42`, before `app` is ready — must stay there.
+- `src/renderer/src/session/useAudioEngine.ts:71` — `useAudioEngine()`, the whole two-`<audio>`-element crossfade engine: prepare/activate/replay, `assignedIndexRef` vs `activeIndexRef` split (race-condition fix, see CLAUDE.md), fade timing, seek-fallback `slowStartTracks` set, ReplayGain measurement + `track:gain` persistence, `previewStartRatio` handling.
+
+## Disposal (delete/move/trash)
+- `src/main/disposal/dispose.ts:32` — `disposeTracks()`, the shared loop across all three modes. Stops the batch on first Recycle-Bin failure → `needsPermanentPrompt`.
+- `src/main/disposal/sidecars.ts:18,40` — `findSameBasenameSidecars()`, `findAlbumArtIfLastTrack()`.
+- `src/main/disposal/sidecars.test.ts` — real-temp-dir tests for sidecar rules.
+- `src/main/disposal/emptyFolders.ts:24` — `removeEmptyFoldersUpward()`. No `visited` guard on purpose — see CLAUDE.md for the bug that caused.
+- `src/main/disposal/emptyFolders.test.ts`
+- `src/main/disposal/quarantineMove.ts:47` — `moveFileToQuarantine()`, same-volume rename / cross-volume copy+verify+delete on `EXDEV`, collision handling.
+- `src/main/disposal/restore.ts:9` — `restoreMovedFile()`, reverses a quarantine move.
+- `src/renderer/src/session/ReviewScreen.tsx:22` — pre-disposal confirmation UI, "Deleting" (library-wide, persistent) vs "Keeping" (this session only) lists.
+- `src/renderer/src/session/RestoreScreen.tsx:8` — lists + restores quarantined files.
+
+## Persistence (state files)
+- `src/main/state/paths.ts` — `getLibraryFilePath()`, `getDecisionsFilePath()`, `getArtDir()`, `getSettingsFilePath()` — all under `app.getPath('userData')`.
+- `src/main/state/atomicWrite.ts:17,57` — `writeJsonAtomic()` (temp+fsync+rename+`.bak` rotation, per-path write serialization) and `readJsonWithFallback()` (falls back to `.bak` on parse failure).
+- `src/main/state/atomicWrite.test.ts` — the five-concurrent-writes-one-path regression test.
+- `src/main/state/decisionsStore.ts:13` — `DecisionsStore` class: debounced (2s) writer for `decisions.json`, `recordDecision`/`recordUndo`/`recordDisposal`/`recordSessionCompleted` for lifetime `stats`, `flush()` for the three force-flush triggers.
+
+## Settings
+- `src/renderer/src/session/SettingsScreen.tsx:24` — `SettingsScreen()`, every settings field (autoplay/volume/normalize/preview-start/side-click/disposal-mode+quarantine-folder/remove-sidecars/remove-empty-folders/theme/check-for-updates), plus the "Forget dormant tracks" preview-then-confirm action.
+- `src/main/library/dormant.ts:8` — `findDormantTracks()`, missing-record staleness detection (20+ scans unseen).
+- `src/main/library/dormant.test.ts`
+- `src/shared/types.ts:137-167` — `Settings` interface + `createDefaultSettings()`. New fields: remember to merge-over-defaults on load (`index.ts:349`), not replace — see CLAUDE.md.
+
+## Stats
+- `src/main/library/stats.ts:18` — `computeLifetimeStats()`, everything derived from existing state (no new tracking). `_internal.weekStartIso` exported for tests.
+- `src/main/library/stats.test.ts`
+- `src/renderer/src/session/StatsScreen.tsx:27` — stats display + weekly bar chart.
+
+## Theming
+- `src/renderer/src/styles.css` — all theme tokens, three blocks: `:root` (light), `@media (prefers-color-scheme: dark)`, `:root[data-theme='dark']`. Also the Tailwind v4 entry point (`@import "tailwindcss"`).
+- `src/renderer/src/useTheme.ts:10` — `useTheme()`, applies `data-theme` attribute to the document root.
+- `src/main/index.ts:57-60` — `resolveBackgroundColor()`, hand-mirrors `--surface-base` for no-flash-on-launch window background.
+
+## App shell / navigation
+- `src/renderer/src/App.tsx:28` — `App()`, the single `View` union state machine (library/resume/sessionPicker/swiping/review/restore/settings/stats). `startSession()` (line ~86) is where every-session-start-rescans is wired.
+- `src/renderer/src/main.tsx` — React root mount.
+
+## Packaging / build
+- `electron.vite.config.ts` — main/preload/renderer triple build config, Tailwind v4 plugin wiring.
+- `electron-builder.yml` — NSIS Windows target config.
+- `package.json` scripts — `dev`, `build`, `test`, `typecheck`, `dist`, `dist:local` (see CLAUDE.md's Packaging section for what `dist:local` does and why it force-installs `sharp`'s win32-x64 binary).
+- `.github/workflows/build.yml` — the real Windows-runner build (this container can't produce the final `.exe`, see CLAUDE.md).
+- `src/main/updater.ts` — `electron-updater` wiring, gated by `checkForUpdates` setting + `app.isPackaged`. Unverified end-to-end (needs a real packaged build + release feed).
+
+## Tests
+All co-located as `*.test.ts` next to the module under test, run via `npm run test` (vitest).
+No separate `tests/` tree. Pure-logic modules only — no renderer/component tests exist.

@@ -63,3 +63,43 @@ body {
      animation) should never surface a horizontal scrollbar at the document level. */
   overflow-x: hidden;
 }
+
+/*
+ * Global button interaction states. Buttons across the app set their own border/text color via
+ * inline `style` (semantic tokens like --discard/--keep/--accent) rather than a shared class, so
+ * this uses `currentColor` for the hover/active tint — it automatically picks up whatever color
+ * each button already has, giving every button a matching-hued hover without per-button CSS.
+ * Inline `backgroundColor` (e.g. the card's play/pause button) always wins over this regardless,
+ * since inline styles outrank any stylesheet rule — so this only fills in buttons that don't
+ * already set one. `border-radius` here is a fallback baseline only: any Tailwind `rounded-*`
+ * class on the button beats it on specificity, so this never fights an explicit shape.
+ */
+button {
+  border-radius: 0.5rem;
+}
+button:not(:disabled) {
+  cursor: pointer;
+  transition:
+    transform 150ms ease,
+    background-color 150ms ease,
+    filter 150ms ease,
+    box-shadow 150ms ease;
+}
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+  background-color: color-mix(in srgb, currentColor 12%, transparent);
+  filter: brightness(1.08);
+}
+button:not(:disabled):active {
+  transform: translateY(0) scale(0.97);
+  background-color: color-mix(in srgb, currentColor 20%, transparent);
+  filter: brightness(0.96);
+  transition-duration: 60ms;
+}
+button:disabled {
+  cursor: default;
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
