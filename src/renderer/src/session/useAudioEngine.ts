@@ -49,7 +49,14 @@ export function useAudioEngine(
 ): AudioEngineHandle {
   const ctxRef = useRef<AudioContext | null>(null)
   const slotsRef = useRef<[Slot, Slot] | null>(null)
+  // Which slot is actually audible right now — updated only once the real fade/play happens,
+  // so playback controls (toggle/replay/volume) always act on what's truly making sound.
   const activeIndexRef = useRef(0)
+  // Which slot is *assigned* to the current front card — committed synchronously, before any
+  // await, so the sibling nextCard-prefetch effect (which can run in the same commit, before
+  // any microtask drains) always computes the correct standby slot. See the race this fixes,
+  // documented above the `activate` effect below.
+  const assignedIndexRef = useRef(0)
   const settingsRef = useRef(settings)
   settingsRef.current = settings
 
@@ -161,14 +168,24 @@ export function useAudioEngine(
     if (!frontCard) return
     let cancelled = false
 
+    const [a, b] = ensureEngine()
+    // If the next-prepared standby slot already matches the new front card, ping-pong onto
+    // it; otherwise (e.g. session just started) prepare the currently-active slot in place.
+    // Race this avoids: the sibling nextCard-prefetch effect below can run synchronously right
+    // after this one, in the same commit, before `activate`'s `await prepare(...)` below ever
+    // yields — so it must see the slot this card is claiming *now*, not after the async work
+    // completes. Committing `assignedIndexRef` synchronously here (before any await) is what
+    // makes that possible; previously this assignment lived after the await, inside `activate`,
+    // so the sibling effect read a stale index and prefetched the next track onto the very slot
+    // this card was mid-activation on — audibly swapping to the wrong track's audio while the
+    // correct card was still on screen.
+    const standbyIndex = 1 - assignedIndexRef.current
+    const standby = [a, b][standbyIndex]
+    const useStandby = standby.preparedFor === frontCard.id
+    const targetIndex = useStandby ? standbyIndex : assignedIndexRef.current
+    assignedIndexRef.current = targetIndex
+
     async function activate(): Promise<void> {
-      const [a, b] = ensureEngine()
-      // If the next-prepared standby slot already matches the new front card, ping-pong onto
-      // it; otherwise (e.g. session just started) prepare the currently-active slot in place.
-      const standbyIndex = 1 - activeIndexRef.current
-      const standby = [a, b][standbyIndex]
-      const useStandby = standby.preparedFor === frontCard!.id
-      const targetIndex = useStandby ? standbyIndex : activeIndexRef.current
       const outgoing = [a, b][1 - targetIndex]
       const incoming = [a, b][targetIndex]
 
@@ -205,7 +222,10 @@ export function useAudioEngine(
     if (!nextCard) return
     const slots = slotsRef.current
     if (!slots) return
-    const standby = slots[1 - activeIndexRef.current]
+    // assignedIndexRef, not activeIndexRef — see the comment above the frontCard effect. This
+    // must reflect which slot the *current* front card claimed, even before its own activation
+    // has finished, or this can prefetch onto the slot that's still mid-activation.
+    const standby = slots[1 - assignedIndexRef.current]
     void prepare(standby, nextCard)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nextCard?.id])
