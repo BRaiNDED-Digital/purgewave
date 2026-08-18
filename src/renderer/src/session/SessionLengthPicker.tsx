@@ -1,4 +1,5 @@
 import type { SessionLimit } from '../../../shared/types'
+import { InfinityIcon } from './icons'
 
 const OPTIONS: { label: string; limit: SessionLimit }[] = [
   { label: '10', limit: 10 },
@@ -18,52 +19,46 @@ export function getLastSessionLimit(): SessionLimit {
   return n === 10 || n === 25 || n === 50 || n === 100 ? n : 25
 }
 
-function rememberSessionLimit(limit: SessionLimit): void {
+export function rememberSessionLimit(limit: SessionLimit): void {
   localStorage.setItem(STORAGE_KEY, String(limit))
 }
 
 interface Props {
-  onStart: (limit: SessionLimit) => void
-  /** True while the pre-session rescan (triggered after a limit is picked) is in flight. */
-  starting: boolean
+  value: SessionLimit
+  onChange: (limit: SessionLimit) => void
+  disabled?: boolean
 }
 
-export function SessionLengthPicker({ onStart, starting }: Props) {
-  const last = getLastSessionLimit()
-
-  function choose(limit: SessionLimit): void {
-    rememberSessionLimit(limit)
-    onStart(limit)
-  }
-
+/** Inline toggle group living directly under the main menu's "Start session" button (§ per user
+ *  request — session length used to be its own intermediate screen; picking a length is now just
+ *  part of the main menu itself, and "Start session" reads whichever toggle is currently active. */
+export function SessionLengthToggle({ value, onChange, disabled }: Props) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 p-8">
-      <h2 className="text-xl font-medium" style={{ color: 'var(--text-primary)' }}>
-        How many tracks this session?
-      </h2>
-      <div className="flex flex-wrap justify-center gap-3">
-        {OPTIONS.map((opt) => (
-          <button
-            key={opt.label}
-            onClick={() => choose(opt.limit)}
-            autoFocus={opt.limit === last}
-            disabled={starting}
-            className="rounded-xl border px-6 py-4 text-lg font-medium transition-colors disabled:opacity-40"
-            style={{
-              borderColor: opt.limit === last ? 'var(--accent)' : 'var(--border-subtle)',
-              color: 'var(--text-primary)',
-              backgroundColor: 'var(--surface-raised)'
-            }}
-          >
-            {opt.label}
-          </button>
-        ))}
+    <div className="flex w-full flex-col items-center gap-2">
+      <p className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)' }}>
+        Tracks to Review
+      </p>
+      <div className="flex w-full flex-wrap justify-center gap-2">
+        {OPTIONS.map((opt) => {
+          const active = opt.limit === value
+          return (
+            <button
+              key={opt.label}
+              onClick={() => onChange(opt.limit)}
+              disabled={disabled}
+              aria-label={opt.limit === null ? 'Unlimited' : undefined}
+              className="rounded-lg border px-3.5 py-1.5 text-sm font-medium disabled:opacity-40"
+              style={{
+                borderColor: active ? 'var(--accent)' : 'var(--border-subtle)',
+                backgroundColor: active ? 'var(--accent)' : 'transparent',
+                color: active ? 'var(--accent-contrast)' : 'var(--text-secondary)'
+              }}
+            >
+              {opt.limit === null ? <InfinityIcon size={22} /> : opt.label}
+            </button>
+          )
+        })}
       </div>
-      {starting && (
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          Checking for changes…
-        </p>
-      )}
     </div>
   )
 }

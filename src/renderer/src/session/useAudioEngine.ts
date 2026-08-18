@@ -3,6 +3,10 @@ import type { Card } from '../../../shared/types'
 
 const FADE_IN_MS = 1000
 const FADE_OUT_MS = 200
+// Much slower than the 200ms between-track crossfade — per user request, whatever's still
+// playing when the session ends (queue exhausted or "End Session") should wind down gently
+// rather than duck out at the same brisk pace used for every ordinary swipe.
+const SESSION_END_FADE_MS = 3000
 const SLOW_PREPARE_MS = 400
 const TARGET_LOUDNESS_DB = -18
 const MAX_CORRECTION_DB = 12
@@ -51,6 +55,11 @@ export interface AudioEngineHandle {
   togglePlayPause: () => void
   replay: () => void
   isPlaying: boolean
+  /** Seconds into the front card's own track — already reflects the configured preview-start
+   *  offset (§8's previewStartRatio) the instant playback begins, since it's read straight off
+   *  the real `<audio>` element's `currentTime` after `prepare()` has already seeked it there,
+   *  not derived/recomputed from the ratio separately. */
+  currentTime: number
 }
 
 function dbToGain(db: number): number {
@@ -91,6 +100,10 @@ export function useAudioEngine(
   // at right now, so the *outgoing* element's pause() call (fired 200ms into every crossfade)
   // never clobbers this back to false right after the *incoming* element already started.
   const [isPlaying, setIsPlaying] = useState(false)
+  // Same "only the truly active slot" filtering as isPlaying above, and the same reason: the
+  // outgoing element's own timeupdate ticks during its 200ms fade-out must not overwrite this
+  // with a position that no longer matches what's audible.
+  const [currentTime, setCurrentTime] = useState(0)
 
   function ensureEngine(): [Slot, Slot] {
     if (slotsRef.current) return slotsRef.current
@@ -136,6 +149,11 @@ export function useAudioEngine(
       })
       el.addEventListener('ended', () => {
         if (isActiveSlot()) setIsPlaying(false)
+      })
+      // Native `timeupdate` firing rate (roughly 4/sec, browser-dependent) is plenty for a MM:SS
+      // readout — no need for a rAF loop just to drive a once-a-second-ish text update.
+      el.addEventListener('timeupdate', () => {
+        if (isActiveSlot()) setCurrentTime(el.currentTime)
       })
       return slot
     }
@@ -340,6 +358,10 @@ export function useAudioEngine(
       }
 
       activeIndexRef.current = targetIndex
+      // Commit the new active element's position immediately rather than waiting for its next
+      // `timeupdate` tick (up to ~250ms away) — otherwise the readout briefly shows the outgoing
+      // track's last-known position (or 0) after this card is already the one on screen.
+      setCurrentTime(incoming.el.currentTime)
       incoming.el.muted = false
 
       const baseGain = settingsRef.current.volume
@@ -375,22 +397,6 @@ export function useAudioEngine(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frontCard?.id])
 
-  // The activate effect above bails out immediately (`if (!frontCard) return`) once the queue is
-  // exhausted and the summary screen appears — which previously meant whatever was still audible
-  // just kept playing indefinitely, since nothing else ever told it to stop. This fades it out and
-  // pauses it the same way a swipe's crossfade would, instead of letting it play on unattended or
-  // cutting it off with a hard click on the eventual unmount.
-  useEffect(() => {
-    if (frontCard) return
-    const slots = slotsRef.current
-    if (!slots) return
-    const active = slots[activeIndexRef.current]
-    if (active.el.paused) return
-    fadeGain(active, 0, FADE_OUT_MS)
-    const timer = setTimeout(() => active.el.pause(), FADE_OUT_MS)
-    return () => clearTimeout(timer)
-  }, [frontCard])
-
   useEffect(() => {
     if (!nextCard) return
     const slots = slotsRef.current
@@ -425,12 +431,30 @@ export function useAudioEngine(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.volume, settings.normalize])
 
-  // True unmount only (leaving the swipe screen entirely) — tears down the whole audio graph.
+  // True unmount only (leaving the swipe screen entirely — the only way that happens is a session
+  // ending, whether naturally or via "End Session"). Per user request, the swipe screen now hands
+  // off to the summary screen immediately with no in-between "Session complete" screen to keep this
+  // component mounted for a few seconds — so a slow, graceful fade can no longer happen *while*
+  // this hook is still mounted. Instead this cleanup schedules the fade itself and lets it keep
+  // running via plain closures/timers after unmount: `new Audio()` elements and their AudioContext
+  // are ordinary JS objects with no dependency on this component's React lifecycle or even DOM
+  // attachment (they were never inserted into the document to begin with), so nothing here needs
+  // the component to still be mounted — the ramp and the final pause/close just happen a few
+  // seconds later in the background while the user is already looking at the summary screen.
   useEffect(() => {
     return () => {
       const slots = slotsRef.current
-      slots?.forEach((s) => s.el.pause())
-      void ctxRef.current?.close()
+      const ctx = ctxRef.current
+      if (!slots || !ctx) return
+      const active = slots[activeIndexRef.current]
+      if (!active.el.paused) fadeGain(active, 0, SESSION_END_FADE_MS)
+      slots.forEach((s) => {
+        if (s !== active) s.el.pause()
+      })
+      setTimeout(() => {
+        slots.forEach((s) => s.el.pause())
+        void ctx.close()
+      }, SESSION_END_FADE_MS)
     }
   }, [])
 
@@ -448,8 +472,10 @@ export function useAudioEngine(
       const active = slots[activeIndexRef.current]
       const offset = slowStartTracks.has(frontCard.id) ? 0 : frontCard.durationSec * settingsRef.current.previewStartRatio
       active.el.currentTime = offset
+      setCurrentTime(offset)
       void active.el.play().catch(() => {})
     },
-    isPlaying
+    isPlaying,
+    currentTime
   }
 }

@@ -11,17 +11,22 @@ export type Intent =
 
 /**
  * Keyboard mapping. `event.repeat` is checked by the caller before this resolves — holding a
- * key must mark exactly one card. Arrow keys and A/D are deliberately not mapped to discard/keep
- * — the two interaction methods for a decision are dragging the card and left/right mouse click
- * (see `SwipeCard`'s pointer handlers); `Delete`/`Enter` remain as keyboard equivalents.
+ * key must mark exactly one card. The two interaction methods for a decision are dragging the
+ * card and A/D (mnemonic: A = purge/left, D = keep/right, mirroring the drag directions) — mouse
+ * click used to also decide, but that was removed after real accidental-click reports; `Delete`/
+ * `Enter` remain as secondary keyboard equivalents.
  */
 export function resolveKeyIntent(e: KeyboardEvent): Intent | null {
   if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) return 'undo'
 
   switch (e.key) {
     case 'Delete':
+    case 'a':
+    case 'A':
       return 'discard'
     case 'Enter':
+    case 'd':
+    case 'D':
       return 'keep'
     case ' ':
       return 'playPause'

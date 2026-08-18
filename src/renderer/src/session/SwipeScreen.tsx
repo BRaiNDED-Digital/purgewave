@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMotionValue, useTransform, motion } from 'framer-motion'
 import { SwipeCard } from './SwipeCard'
 import { CardBody } from './CardBody'
 import { useArtworkGradient } from './useArtworkGradient'
 import { resolveKeyIntent, isUndoMouseButton } from './keymap'
 import { useAudioEngine } from './useAudioEngine'
 import { SettingsScreen } from './SettingsScreen'
-import { GearIcon, MouseGlyph } from './icons'
-import type { Card, DecisionEntry, SessionLimit, Theme, TrackDecision } from '../../../shared/types'
+import { GearIcon, KeyCap, ArrowGlyph, StopIcon, UndoIcon } from './icons'
+import type { Card, DecisionEntry, SessionLimit, TrackDecision } from '../../../shared/types'
 
 const PREFETCH_WINDOW = 50
 const PREFETCH_LOOKAHEAD = 10
@@ -29,7 +30,6 @@ interface Props {
   queue: string[]
   limit: SessionLimit
   onEndSession: (summary: SessionSummary) => void
-  onThemeChange: (theme: Theme) => void
 }
 
 function useReducedMotion(): boolean {
@@ -45,7 +45,7 @@ function useReducedMotion(): boolean {
   return reduced
 }
 
-export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props) {
+export function SwipeScreen({ queue, limit, onEndSession }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [windowEnd, setWindowEnd] = useState(0)
   const [cards, setCards] = useState<Map<string, Card>>(new Map())
@@ -61,7 +61,6 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
   const [normalize, setNormalize] = useState(true)
   const [volume, setVolume] = useState(0.8)
   const [previewStartRatio, setPreviewStartRatio] = useState(0.2)
-  const [sideClickDecisions, setSideClickDecisions] = useState(true)
   const settingsLoaded = useRef(false)
 
   const reducedMotion = useReducedMotion()
@@ -77,7 +76,6 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
       setNormalize(s.normalizeVolume)
       setVolume(s.volume)
       setPreviewStartRatio(s.previewStartRatio)
-      setSideClickDecisions(s.sideClickDecisions)
       settingsLoaded.current = true
     })
   }, [])
@@ -93,15 +91,14 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
 
   // The embedded Settings modal (below) is the real SettingsScreen and writes straight to
   // settings.json via its own IPC calls — it doesn't share this component's local state, so
-  // closing it re-reads whatever changed (autoplay/normalize/volume/side-click) back into the
-  // values this screen's own audio engine and click handling actually use.
+  // closing it re-reads whatever changed (autoplay/normalize/volume) back into the values this
+  // screen's own audio engine actually uses.
   const closeSettings = useCallback(() => {
     setShowSettings(false)
     window.purgewave.getSettings().then((s) => {
       setAutoplay(s.autoplay)
       setNormalize(s.normalizeVolume)
       setVolume(s.volume)
-      setSideClickDecisions(s.sideClickDecisions)
     })
   }, [])
 
@@ -184,10 +181,22 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
     setLastUndone({ id: last.id, direction: last.direction })
   }, [])
 
-  const endSession = useCallback(() => {
+  // Per user feedback there's no separate in-between "Session complete" screen anymore — clicking
+  // End Session goes straight into the real summary (ReviewScreen, via onEndSession), which now
+  // shows this session's own kept/purged/reviewed counts at its own top instead of repeating them
+  // on an intermediate screen first. Naturally exhausting the queue finalizes the same way, via the
+  // effect below — both paths call this exact same logic so they can't drift apart.
+  const finalizeSession = useCallback(() => {
     window.purgewave.sessionComplete()
     onEndSession({ kept, marked, reviewed: currentIndex, keptIds })
   }, [onEndSession, kept, marked, currentIndex, keptIds])
+
+  // Fires once the queue naturally runs out (not via the button above, which calls
+  // `finalizeSession` directly instead) — same finalize logic either way.
+  useEffect(() => {
+    if (ended) finalizeSession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ended])
 
   // Keyboard + mouse-button-4 dispatch, per §6.4. Scoped to this screen only.
   const frontIdRef = useRef<string | undefined>(queue[currentIndex])
@@ -213,7 +222,7 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
       }
 
       if (intent === 'undo') return undo()
-      if (intent === 'endSession') return endSession()
+      if (intent === 'endSession') return finalizeSession()
       if (intent === 'playPause') return audio.togglePlayPause()
       if (intent === 'replay') return audio.replay()
       if (intent === 'volumeUp') return setVolume((v) => Math.min(1, Math.round((v + 0.1) * 100) / 100))
@@ -233,105 +242,120 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('mouseup', onMouseUp)
     }
-  }, [undo, endSession, audio, showHelp, showSettings, closeSettings])
+  }, [undo, finalizeSession, audio, showHelp, showSettings, closeSettings])
 
-  // Only two ways to interact with a card: drag it, or a plain left/right click (§8 "Side-click
-  // decisions" gates whether a click decides anything at all — the dedicated play/pause button on
-  // the card handles play/pause now, so there's no center-click fallback to gate separately).
-  function handleCardClick(button: 'left' | 'right'): void {
-    if (!sideClickDecisions) return
-    const id = frontIdRef.current
-    if (!id) return
-    cardRefs.current.get(id)?.exit(button === 'left' ? 'discard' : 'keep')
-  }
+  // Static, window-level drag-intent hints (§9.3 revision): these no longer move with the card —
+  // the card slides *over* them instead. Driven by the current front card's live drag state,
+  // mirrored up here via SwipeCard's onDragChange (only the true front card ever reports).
+  const dragX = useMotionValue(0)
+  const handleDragChange = useCallback((x: number) => dragX.set(x), [dragX])
+  // Always at least AMBIENT_OPACITY visible (a constant, ambient hint rather than something that
+  // only appears on interaction) — but per user feedback, pressing the card without moving it
+  // must NOT intensify these beyond that floor; only actual movement (dragX) should ramp them up,
+  // so `dragPressed` no longer feeds into this at all.
+  const AMBIENT_OPACITY = 0.22
+  const keepHintOpacity = useTransform(dragX, (xv) => Math.max(AMBIENT_OPACITY, Math.min(1, Math.max(0, xv) / 155)))
+  const discardHintOpacity = useTransform(dragX, (xv) => Math.max(AMBIENT_OPACITY, Math.min(1, Math.max(0, -xv) / 155)))
 
   const stackIds = useMemo(() => queue.slice(currentIndex, currentIndex + 3), [queue, currentIndex])
 
-  if (ended) {
-    const isEmpty = queue.length === 0
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-        <h2 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
-          {isEmpty ? 'Nothing to review' : 'Session complete'}
-        </h2>
-        <p style={{ color: 'var(--text-secondary)' }}>
-          {isEmpty
-            ? "Your library is fully triaged — there's nothing left in the queue right now."
-            : `${kept} kept · ${marked} marked for deletion · ${currentIndex} reviewed`}
-        </p>
-        <button
-          onClick={() => {
-            window.purgewave.sessionComplete()
-            onEndSession({ kept, marked, reviewed: currentIndex, keptIds })
-          }}
-          className="mt-4 rounded-xl border px-6 py-3 font-medium"
-          style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
-        >
-          Done
-        </button>
-      </div>
-    )
-  }
+  // No more in-between "Session complete" screen here — the effect above already calls
+  // `finalizeSession()` the instant `ended` becomes true, which hands off to the real summary
+  // (ReviewScreen) via `onEndSession`. This still renders one blank frame in between (React commits
+  // this render before the effect's `setView` in the parent takes effect) — `null` rather than the
+  // old full-screen card avoids that frame looking like a broken/empty card stack.
+  if (ended) return null
 
   const remainingCount = queue.length - currentIndex
 
   return (
     <div className="flex flex-1 flex-col items-center gap-4 p-6">
-      <div className="flex w-full max-w-md flex-col gap-4">
-        <div className="flex w-full items-center justify-between text-sm" style={{ color: 'var(--text-muted)' }}>
-          <span>
-            {limit ? `${remainingCount} left in this session` : `${currentIndex + 1} of ${queue.length}`}
-          </span>
-          <span>
-            {kept} kept · {marked} marked
-          </span>
+      {/* Static, window-level drag-intent hints (§9.3 revision) — `fixed inset-0`, so these span
+          the FULL HEIGHT of the window and sit flush against its outer left/right edges, not just
+          the card's own bounds. The 3-column flex row (hint / spacer / hint) is what centers the
+          TEXT halfway between the card and the window edge without a manual calc(): the center
+          spacer matches the card column's own `max-w-md`, and both hint columns are equal `flex-1`
+          gutters, so flexbox's own centering lands the text in the middle of each gutter for free.
+          The COLOR wash is a separate, narrower band pinned to the true outer edge (not spanning
+          the whole gutter) — per user feedback, the color needs to stay close to the window edge
+          rather than visually reaching all the way to the card. Rendered as an early sibling
+          (painted first) so the card stack, later in DOM order, always slides visually *over*
+          these rather than under them. */}
+      <div className="pointer-events-none fixed inset-0 z-0 flex items-stretch">
+        <div className="relative flex flex-1 items-center justify-center">
+          <motion.div
+            aria-hidden
+            className="absolute inset-y-0 left-0 w-56"
+            style={{
+              opacity: discardHintOpacity,
+              background: 'linear-gradient(to left, transparent, color-mix(in srgb, var(--discard) 45%, transparent))'
+            }}
+          />
+          {/* One row now: the arrow — bigger, vertically centered with the label via `items-center`
+              — is the OUTERMOST element (leftmost, closest to the window edge), pointing further
+              outward; the A keycap sits on the INNER side (rightmost, toward the card), with the
+              all-caps label in between. */}
+          <div
+            className="relative z-10 flex items-center gap-2 text-xl font-bold uppercase"
+            style={{ color: 'color-mix(in srgb, var(--discard) 70%, white)' }}
+          >
+            <ArrowGlyph direction="left" size={26} />
+            <span>Purge</span>
+            <KeyCap label="A" color="var(--discard)" />
+          </div>
         </div>
-
-        <div className="flex w-full items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
-          <label className="flex items-center gap-1.5">
-            Volume
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={volume}
-              onChange={(e) => setVolume(Number(e.target.value))}
-            />
-          </label>
-          <div className="flex items-center gap-3">
-            <button onClick={endSession} className="underline" style={{ color: 'var(--text-muted)' }}>
-              End session
-            </button>
-            <button
-              onClick={() => setShowSettings(true)}
-              aria-label="Settings"
-              className="flex items-center justify-center rounded-full border"
-              style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)', width: 26, height: 26 }}
-            >
-              <GearIcon size={14} />
-            </button>
+        <div className="w-full max-w-md shrink-0" aria-hidden />
+        <div className="relative flex flex-1 items-center justify-center">
+          <motion.div
+            aria-hidden
+            className="absolute inset-y-0 right-0 w-56"
+            style={{
+              opacity: keepHintOpacity,
+              background: 'linear-gradient(to right, transparent, color-mix(in srgb, var(--keep) 45%, transparent))'
+            }}
+          />
+          <div
+            className="relative z-10 flex items-center gap-2 text-xl font-bold uppercase"
+            style={{ color: 'color-mix(in srgb, var(--keep) 70%, white)' }}
+          >
+            <KeyCap label="D" color="var(--keep)" />
+            <span>Keep</span>
+            <ArrowGlyph direction="right" size={26} />
           </div>
         </div>
       </div>
 
-      {/* This wrapper soaks up all the leftover vertical space so the card stack sits centered
-          in the window with breathing room above (controls) and below (action buttons), instead
-          of being packed immediately under the header. No overflow-hidden here on purpose — this
-          container is exactly card-sized, so clipping at this level cuts the exit animation off
-          right at the card's own edge instead of letting it visually slide and fade across the
-          viewport. The scrollbar this used to cause (a card mid-exit translates ~1.4x viewport
-          width past this container's bounds) is handled once, globally, via `overflow-x: hidden`
-          on body in styles.css instead — that clips only at the true document edge, not the
-          card's local bounding box. */}
-      <div className="flex w-full flex-1 items-center justify-center">
-        <div className="relative w-full max-w-md">
+      {/* This wrapper soaks up all the leftover vertical space so the heading+card sit centered
+          in the window together, as one unit, with breathing room above (controls) and below
+          (action buttons) — the heading is no longer a separate row pinned near the top; it's
+          part of this centered column, sitting directly above the card. No overflow-hidden here
+          on purpose — the card-stack container below is exactly card-sized, so clipping at this
+          level cuts the exit animation off right at the card's own edge instead of letting it
+          visually slide and fade across the viewport. The scrollbar this used to cause (a card
+          mid-exit translates ~1.4x viewport width past this container's bounds) is handled once,
+          globally, via `overflow-x: hidden` on body in styles.css instead — that clips only at
+          the true document edge, not the card's local bounding box. */}
+      <div className="flex w-full flex-1 flex-col items-center justify-center gap-3">
+        {/* Progress + tally: the "N left" count is the big headline (its own line), kept/purged
+            are smaller color-coded subheadings underneath rather than folded into one sentence. */}
+        <div className="flex w-full max-w-md flex-col items-center gap-0.5">
+          <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            {limit ? `${remainingCount} left in this session` : `${currentIndex + 1} of ${queue.length}`}
+          </span>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <span style={{ color: 'var(--discard)' }}>{marked} Purged</span>
+            <span style={{ color: 'var(--text-muted)' }}>·</span>
+            <span style={{ color: 'var(--keep)' }}>{kept} Kept</span>
+          </div>
+        </div>
+
+        <div className="relative z-10 w-full max-w-md">
           {/* Invisible sizer (see the comment above `sizerVisuals`): normal-flow, so it gives
               this `relative` container a real height equal to the front card's own natural
               content height — square artwork, a tall cover, a card with extra optional lines of
               metadata all grow or shrink this the same way they'd grow or shrink the real card. */}
           {frontCard && (
-            <div className="invisible flex flex-col overflow-hidden rounded-2xl border" aria-hidden="true">
+            <div className="invisible flex flex-col overflow-hidden rounded-2xl border-2" aria-hidden="true">
               <CardBody
                 card={frontCard}
                 artworkGradient={sizerVisuals.gradient}
@@ -378,40 +402,45 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
                 enterFromExitDirection={!isExiting && lastUndone?.id === id ? lastUndone.direction : null}
                 onCommitted={(direction) => commit(id, direction)}
                 onExitAnimationComplete={() => setExiting((e) => e.filter((x) => x.id !== id))}
-                onCardClick={isExiting ? () => {} : handleCardClick}
                 isPlaying={!isExiting && stackIndex === 0 ? audio.isPlaying : false}
                 onTogglePlay={!isExiting && stackIndex === 0 ? audio.togglePlayPause : undefined}
+                currentTime={!isExiting && stackIndex === 0 ? audio.currentTime : undefined}
+                volume={!isExiting && stackIndex === 0 ? volume : undefined}
+                onVolumeChange={!isExiting && stackIndex === 0 ? setVolume : undefined}
+                onDragChange={!isExiting && stackIndex === 0 ? handleDragChange : undefined}
               />
             )
           })}
         </div>
       </div>
 
+      {/* A/D purge/keep glyphs now live up in the drag-intent hint panels (always visible against
+          the window edges), so this row is just the three remaining session controls: End Session
+          and Settings, moved down from their old top-row spot to flank Undo — now a real icon
+          button instead of a Z-keycap-plus-label pair. */}
       <div className="flex w-full max-w-md items-center justify-between">
-        <div className="flex items-center gap-2" style={{ color: 'var(--discard)' }}>
-          <MouseGlyph side="left" />
-          <span className="text-sm font-medium">Discard</span>
-        </div>
+        <button
+          onClick={finalizeSession}
+          className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium"
+          style={{ borderColor: 'var(--discard)', color: 'var(--discard)' }}
+        >
+          <StopIcon size={12} /> End Session
+        </button>
         <button
           onClick={undo}
           disabled={undoStack.length === 0}
-          className="rounded-xl border px-4 py-3 text-sm font-medium disabled:opacity-40"
+          className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium disabled:opacity-40"
           style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
         >
-          Undo
+          <UndoIcon size={14} /> Undo
         </button>
         <button
-          onClick={() => setShowHelp(true)}
-          aria-label="Keyboard shortcuts"
-          className="rounded-full border text-sm font-medium"
-          style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-muted)', width: 28, height: 28 }}
+          onClick={() => setShowSettings(true)}
+          className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm"
+          style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-secondary)' }}
         >
-          ?
+          <GearIcon size={14} /> Settings
         </button>
-        <div className="flex items-center gap-2" style={{ color: 'var(--keep)' }}>
-          <span className="text-sm font-medium">Keep</span>
-          <MouseGlyph side="right" />
-        </div>
       </div>
 
       {showHelp && (
@@ -430,12 +459,12 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
             </h3>
             <dl className="flex flex-col gap-2 text-sm">
               {[
-                ['Discard', 'Delete · drag left · left click'],
-                ['Keep', 'Enter · drag right · right click'],
+                ['Purge', 'A · Delete · drag left'],
+                ['Keep', 'D · Enter · drag right'],
                 ['Play / pause', 'Space · play button on card'],
                 ['Replay from start', 'R'],
                 ['Undo', 'Ctrl+Z · Backspace · U · mouse back button'],
-                ['End session', 'Esc'],
+                ['End Session', 'Esc'],
                 ['Volume', '+ / −'],
                 ['This list', '?']
               ].map(([label, keys]) => (
@@ -469,7 +498,7 @@ export function SwipeScreen({ queue, limit, onEndSession, onThemeChange }: Props
             style={{ backgroundColor: 'var(--surface-overlay)', borderColor: 'var(--border-subtle)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <SettingsScreen onDone={closeSettings} onThemeChange={onThemeChange} />
+            <SettingsScreen onDone={closeSettings} />
           </div>
         </div>
       )}

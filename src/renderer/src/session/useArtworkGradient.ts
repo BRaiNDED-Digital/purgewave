@@ -88,9 +88,9 @@ function hslToRgb(h: number, s: number, l: number): Rgb {
   }
 }
 
-// Real-world album art is often fairly desaturated/dark/light — averaging a 8x8 block only makes
-// that worse (it tends toward grey). Boosting saturation and pulling lightness into a mid band
-// keeps the gradient a clearly visible color instead of washing out to near-white/near-black/grey
+// Real-world album art is often fairly desaturated/dark/light — averaging a block only makes that
+// worse (it tends toward grey). Boosting saturation and pulling lightness into a mid band keeps
+// the gradient a clearly visible color instead of washing out to near-white/near-black/grey
 // against the card's own surface tone.
 function vivify(rgb: Rgb): Rgb {
   const [h, s, l] = rgbToHsl(rgb.r, rgb.g, rgb.b)
@@ -115,13 +115,14 @@ function clampAspectRatio(ratio: number): number {
 const visualsCache = new Map<string, ArtworkVisuals>()
 
 /**
- * Samples an artwork image at low resolution to derive both its dominant colors (a soft,
- * multi-blob gradient — "blurred" via wide, transparent-falling gradient stops rather than an
- * actual blur filter, which would need an oversized layer to avoid edge clipping under the
- * card's `overflow: hidden`) and its true aspect ratio (so the artwork region — and therefore
- * the whole card — can size itself to the real image instead of force-cropping everything into a
- * fixed box). Only the four corners are sampled/blended for the gradient, never the full image
- * behind text, so the tuned WCAG AA text-contrast pairings (styles.css) stay intact.
+ * Samples an artwork image at low resolution to derive both a soft, low-opacity gradient tint
+ * (three wide, overlapping radial blobs with generous transparent falloff — the closest CSS gets
+ * to an actual blur without an oversized layer to dodge edge-clipping under the card's `overflow:
+ * hidden`) and its true aspect ratio (so the artwork region — and therefore the whole card — can
+ * size itself to the real image instead of force-cropping everything into a fixed box). Alpha is
+ * kept deliberately low: this paints under real card text (title/artist/album/metadata), so it
+ * must never come close to competing with the tuned WCAG AA text-contrast pairings (styles.css)
+ * no matter how vivid or dark a given track's artwork is.
  */
 export function useArtworkGradient(dataUrl: string | null): ArtworkVisuals {
   const [visuals, setVisuals] = useState<ArtworkVisuals>(() =>
@@ -166,11 +167,14 @@ export function useArtworkGradient(dataUrl: string | null): ArtworkVisuals {
         // Stop positions are expressed as percentages of whatever box this gradient ends up
         // painted on — currently the text panel itself (see CardBody), not the whole card, so
         // all three blobs actually land inside the visible panel instead of two of them being
-        // hidden behind the opaque artwork region above it.
+        // hidden behind the opaque artwork region above it. Large radii + a high transparent%
+        // is what makes this read as one smooth wash rather than three distinct patches; low
+        // alpha (~0.18–0.22, down from an earlier, much stronger version) is what keeps text
+        // legible over it regardless of the artwork's own color.
         const gradient = [
-          `radial-gradient(140% 100% at 10% 0%, ${rgba(topLeft, 0.6)}, transparent 65%)`,
-          `radial-gradient(140% 100% at 90% 10%, ${rgba(topRight, 0.5)}, transparent 70%)`,
-          `radial-gradient(160% 120% at 50% 100%, ${rgba(bottom, 0.5)}, transparent 75%)`
+          `radial-gradient(180% 140% at 10% 0%, ${rgba(topLeft, 0.22)}, transparent 78%)`,
+          `radial-gradient(180% 140% at 90% 10%, ${rgba(topRight, 0.18)}, transparent 80%)`,
+          `radial-gradient(200% 160% at 50% 100%, ${rgba(bottom, 0.2)}, transparent 82%)`
         ].join(', ')
 
         const result = { gradient, aspectRatio, borderColor: rgba(dominant, 0.55) }

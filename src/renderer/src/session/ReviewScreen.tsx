@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { DisposalMode, DisposeResult, MarkedTrack, Settings } from '../../../shared/types'
+import type { SessionSummary } from './SwipeScreen'
 
 interface Props {
   sessionKeptIds: string[]
+  // Only present when this screen was reached right after a session ended — shown as a small
+  // summary header up top (per user request: no separate in-between "Session complete" screen
+  // anymore, this doubles as that summary). Absent when reached directly from the main menu's
+  // "Review Marked" button, which isn't tied to any particular session.
+  sessionStats?: SessionSummary
   onDone: () => void
 }
 
@@ -19,7 +25,7 @@ function confirmLabel(mode: DisposalMode, count: number): string {
   return `Permanently delete ${count} file${count === 1 ? '' : 's'}`
 }
 
-export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
+export function ReviewScreen({ sessionKeptIds, sessionStats, onDone }: Props) {
   const [loading, setLoading] = useState(true)
   const [keep, setKeep] = useState<MarkedTrack[]>([])
   const [del, setDel] = useState<MarkedTrack[]>([])
@@ -28,7 +34,9 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
   const [result, setResult] = useState<DisposeResult | null>(null)
   const [needsPermanentPrompt, setNeedsPermanentPrompt] = useState<string[] | null>(null)
   const [processing, setProcessing] = useState(false)
-  // Deleting is the higher-stakes list, so it's the tab shown by default.
+  // Deleting is the higher-stakes list, so it's the tab shown by default — but only when there's
+  // actually something in it; defaulting to it anyway when it's empty just shows a blank list
+  // with nothing to act on. Corrected once the real data loads, below.
   const [activeTab, setActiveTab] = useState<ListName>('delete')
 
   useEffect(() => {
@@ -36,6 +44,7 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
       ([lists, s]) => {
         setKeep(lists.keep)
         setDel(lists.delete)
+        if (lists.delete.length === 0 && lists.keep.length > 0) setActiveTab('keep')
         setSettings(s)
         setLoading(false)
       }
@@ -43,17 +52,32 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Bug found in real use: this used to only update the local `del`/`keep` arrays that drive this
+  // screen's own tabs, never actually persisting the flipped decision — so flipping everything in
+  // "Purging" over to "Keeping" (emptying `del` to 0) left no way to save that: the confirm button
+  // is disabled once `del.length === 0`, and clicking "Back" without ever calling `track:decide`
+  // meant decisions.json still had every one of them marked `delete`, so "Review marked" came right
+  // back with the same count next time. Fixed by writing the flip straight through, matching how
+  // SwipeScreen's own commit() persists a decision — DecisionsStore updates its in-memory copy
+  // synchronously (see CLAUDE.md), so pendingDeletes/getMarked reflect this immediately even before
+  // the debounced disk write lands.
   function flip(id: string, from: ListName): void {
     if (from === 'delete') {
       const row = del.find((t) => t.id === id)
       if (!row) return
+      // Flipping the very last "Purging" row away would otherwise leave the user staring at the
+      // same blank-list problem this screen's initial tab choice already guards against — jump
+      // over to "Keeping" the same way.
+      if (del.length === 1) setActiveTab('keep')
       setDel((d) => d.filter((t) => t.id !== id))
       setKeep((k) => [...k, row])
+      window.purgewave.decide(id, 'keep')
     } else {
       const row = keep.find((t) => t.id === id)
       if (!row) return
       setKeep((k) => k.filter((t) => t.id !== id))
       setDel((d) => [...d, row])
+      window.purgewave.decide(id, 'delete')
     }
   }
 
@@ -198,8 +222,28 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-4 p-6">
-      <div className="flex items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
+    // h-screen (not flex-1) caps this at the viewport height, which is what lets the list below
+    // scroll internally instead of pushing the Back/action row off the bottom of a long list —
+    // that row is a normal shrink-0 flex sibling here, "sticky" simply because it always has room
+    // to sit in view within this fixed-height column.
+    <div className="mx-auto flex h-screen w-full max-w-lg flex-col gap-4 p-6">
+      {/* This session's own headline numbers — the "N left in this session" heading's kept/purged
+          subheadings from the swipe screen, reused here as the top of what's now the session's one
+          and only end-of-session summary (see the Props comment on sessionStats). */}
+      {sessionStats && (
+        <div className="flex shrink-0 flex-col items-center gap-0.5">
+          <span className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>
+            {sessionStats.reviewed} reviewed
+          </span>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <span style={{ color: 'var(--discard)' }}>{sessionStats.marked} Purged</span>
+            <span style={{ color: 'var(--text-muted)' }}>·</span>
+            <span style={{ color: 'var(--keep)' }}>{sessionStats.kept} Kept</span>
+          </div>
+        </div>
+      )}
+
+      <div className="flex shrink-0 items-center justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
         <div className="flex items-center gap-3">
           <span>Disposal:</span>
           {(['recycle-bin', 'quarantine', 'permanent'] as DisposalMode[]).map((m) => (
@@ -216,7 +260,10 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
         </div>
       </div>
 
-      <div className="flex gap-2 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+      {/* A real segmented control now, not just colored text — a contained pill-shaped tray
+          (its own background, rounded) holding both tabs, with the active one getting a
+          tinted fill of its own so it reads as a pressed/selected tab, not just brighter text. */}
+      <div className="flex shrink-0 gap-1 rounded-xl p-1" style={{ backgroundColor: 'var(--surface-raised)' }}>
         {(['delete', 'keep'] as ListName[]).map((tab) => {
           const active = activeTab === tab
           const tint = tab === 'delete' ? 'var(--discard)' : 'var(--keep)'
@@ -225,10 +272,13 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className="-mb-px border-b-2 px-1 pb-2 text-sm font-semibold"
-              style={{ borderColor: active ? tint : 'transparent', color: active ? tint : 'var(--text-muted)' }}
+              className="flex-1 rounded-lg px-4 py-2 text-sm font-semibold"
+              style={{
+                backgroundColor: active ? `color-mix(in srgb, ${tint} 22%, transparent)` : 'transparent',
+                color: active ? tint : 'var(--text-muted)'
+              }}
             >
-              {tab === 'delete' ? 'Deleting' : 'Keeping'} ({count})
+              {tab === 'delete' ? 'Purging' : 'Keeping'} ({count})
               {tab === 'delete' && del.length > 0
                 ? ` — ${formatBytes(del.reduce((s, t) => s + t.size, 0))}`
                 : ''}
@@ -237,7 +287,7 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
         })}
       </div>
 
-      <ul className="flex flex-col gap-1.5">
+      <ul className="flex flex-1 flex-col gap-1.5 overflow-y-auto">
         {(activeTab === 'delete' ? del : keep).map((t) => {
           const tint = activeTab === 'delete' ? 'var(--discard)' : 'var(--keep)'
           return (
@@ -263,7 +313,7 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
                 </button>
               ) : (
                 <button onClick={() => flip(t.id, 'keep')} className="shrink-0 underline" style={{ color: 'var(--discard)' }}>
-                  Discard instead
+                  Purge instead
                 </button>
               )}
             </li>
@@ -276,7 +326,7 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
         )}
       </ul>
 
-      <div className="flex justify-between border-t pt-4" style={{ borderColor: 'var(--border-subtle)' }}>
+      <div className="flex shrink-0 justify-between border-t pt-4" style={{ borderColor: 'var(--border-subtle)' }}>
         <button onClick={onDone} className="text-sm underline" style={{ color: 'var(--text-muted)' }}>
           Back
         </button>
@@ -295,11 +345,23 @@ export function ReviewScreen({ sessionKeptIds, onDone }: Props) {
               {processing ? 'Working…' : 'Yes, proceed'}
             </button>
           </div>
+        ) : del.length === 0 ? (
+          // Nothing left to purge — either nothing ever was, or everything got flipped back to
+          // "keep" (each flip already persists immediately via decide() above). The disposal
+          // button has nothing to do in this state; rather than leaving it disabled and forcing
+          // the user to notice that and fall back to the muted "Back" link, this becomes the
+          // primary, clickable action instead.
+          <button
+            onClick={onDone}
+            className="rounded-xl border px-5 py-3 font-medium"
+            style={{ borderColor: 'var(--keep)', color: 'var(--keep)' }}
+          >
+            Done — nothing to purge
+          </button>
         ) : (
           <button
             onClick={() => setConfirming(true)}
-            disabled={del.length === 0}
-            className="rounded-xl border px-5 py-3 font-medium disabled:opacity-40"
+            className="rounded-xl border px-5 py-3 font-medium"
             style={{ borderColor: 'var(--discard)', color: 'var(--discard)' }}
           >
             {confirmLabel(settings.disposalMode, del.length)}

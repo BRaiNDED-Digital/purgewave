@@ -132,8 +132,6 @@ export type TrackDecision = 'keep' | 'delete'
 
 export type DisposalMode = 'recycle-bin' | 'quarantine' | 'permanent'
 
-export type Theme = 'light' | 'dark' | 'system'
-
 export interface Settings {
   schemaVersion: 1
   autoplay: boolean
@@ -142,10 +140,8 @@ export interface Settings {
   previewStartRatio: number
   disposalMode: DisposalMode
   quarantineFolder: string | null
-  sideClickDecisions: boolean
   removeSidecarFiles: boolean
   removeEmptyFolders: boolean
-  theme: Theme
   checkForUpdates: boolean
 }
 
@@ -158,10 +154,8 @@ export function createDefaultSettings(): Settings {
     previewStartRatio: 0.2,
     disposalMode: 'recycle-bin',
     quarantineFolder: null,
-    sideClickDecisions: true,
     removeSidecarFiles: true,
     removeEmptyFolders: true,
-    theme: 'system',
     checkForUpdates: true
   }
 }

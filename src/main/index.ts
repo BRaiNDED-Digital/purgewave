@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol, nativeTheme } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron'
 import { join } from 'node:path'
 import { scanLibrary } from './library/scan'
 import { buildQueue } from './library/queue'
@@ -51,13 +51,10 @@ function toMarkedTrack(id: string): MarkedTrack | null {
   return { id, title: track.title, artist: track.artist, path: track.path, size: track.size }
 }
 
-// Mirrors styles.css's --surface-base for each theme. Kept in sync by hand (there are only two
-// values) — reading the CSS custom property from the main process isn't possible before a
-// window/renderer exists, which is exactly the launch-time window this exists to close.
-function resolveBackgroundColor(): string {
-  const isDark = settings.theme === 'dark' || (settings.theme === 'system' && nativeTheme.shouldUseDarkColors)
-  return isDark ? '#16151a' : '#f5f3ef'
-}
+// Mirrors styles.css's --surface-base — the app is dark-only now, so this is just a constant.
+// Kept in sync by hand: reading the CSS custom property from the main process isn't possible
+// before a window/renderer exists, which is exactly the launch-time window this exists to close.
+const BACKGROUND_COLOR = '#16151a'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -69,7 +66,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     // §9.1 "no flash on launch": set before first paint so there's no white blink on a
     // dark-theme start, rather than showing a default-white window and repainting after.
-    backgroundColor: resolveBackgroundColor(),
+    backgroundColor: BACKGROUND_COLOR,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,

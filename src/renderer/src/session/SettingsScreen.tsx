@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import type { DisposalMode, DormantTrack, Settings, Theme } from '../../../shared/types'
+import type { DisposalMode, DormantTrack, Settings } from '../../../shared/types'
 
 interface Props {
   onDone: () => void
-  onThemeChange: (theme: Theme) => void
 }
 
 const DISPOSAL_EXPLANATION: Record<DisposalMode, string> = {
@@ -21,7 +20,7 @@ function Row({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function SettingsScreen({ onDone, onThemeChange }: Props) {
+export function SettingsScreen({ onDone }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [dormantPreview, setDormantPreview] = useState<DormantTrack[] | null>(null)
   const [forgetResult, setForgetResult] = useState<number | null>(null)
@@ -108,15 +107,6 @@ export function SettingsScreen({ onDone, onThemeChange }: Props) {
         </div>
       </Row>
 
-      <Row>
-        <span style={{ color: 'var(--text-primary)' }}>Side-click decisions</span>
-        <input
-          type="checkbox"
-          checked={settings.sideClickDecisions}
-          onChange={(e) => update({ sideClickDecisions: e.target.checked })}
-        />
-      </Row>
-
       <div className="flex flex-col gap-2 border-b py-3" style={{ borderColor: 'var(--border-subtle)' }}>
         <div className="flex items-center justify-between text-sm">
           <span style={{ color: 'var(--text-primary)' }}>Disposal mode</span>
@@ -146,14 +136,20 @@ export function SettingsScreen({ onDone, onThemeChange }: Props) {
         )}
       </div>
 
-      <Row>
-        <span style={{ color: 'var(--text-primary)' }}>Remove sidecar files</span>
-        <input
-          type="checkbox"
-          checked={settings.removeSidecarFiles}
-          onChange={(e) => update({ removeSidecarFiles: e.target.checked })}
-        />
-      </Row>
+      <div className="flex flex-col gap-1 border-b py-3" style={{ borderColor: 'var(--border-subtle)' }}>
+        <div className="flex items-center justify-between text-sm">
+          <span style={{ color: 'var(--text-primary)' }}>Remove sidecar files</span>
+          <input
+            type="checkbox"
+            checked={settings.removeSidecarFiles}
+            onChange={(e) => update({ removeSidecarFiles: e.target.checked })}
+          />
+        </div>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          Also removes files that share the track&apos;s name (lyrics, .cue sheets) and any cover
+          art, but only when it&apos;s the last track leaving that folder.
+        </p>
+      </div>
 
       <Row>
         <span style={{ color: 'var(--text-primary)' }}>Remove empty folders</span>
@@ -162,25 +158,6 @@ export function SettingsScreen({ onDone, onThemeChange }: Props) {
           checked={settings.removeEmptyFolders}
           onChange={(e) => update({ removeEmptyFolders: e.target.checked })}
         />
-      </Row>
-
-      <Row>
-        <span style={{ color: 'var(--text-primary)' }}>Theme</span>
-        <div className="flex gap-3 text-sm">
-          {(['system', 'light', 'dark'] as Theme[]).map((t) => (
-            <label key={t} className="flex items-center gap-1">
-              <input
-                type="radio"
-                checked={settings.theme === t}
-                onChange={() => {
-                  update({ theme: t })
-                  onThemeChange(t)
-                }}
-              />
-              {t[0].toUpperCase() + t.slice(1)}
-            </label>
-          ))}
-        </div>
       </Row>
 
       <Row>

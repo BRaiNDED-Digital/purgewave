@@ -1,13 +1,11 @@
 @import 'tailwindcss';
 
 /*
- * Token system per spec §9.1: semantic custom properties on a `data-theme` root attribute.
- * Light is designed on its own terms, not derived by inverting dark (see the dark block below).
- * Every text/surface pairing actually used in the UI hits WCAG AA (4.5:1) for its real size —
- * verified with a standalone relative-luminance script against every surface×text combination,
- * not eyeballed. `--text-muted` in particular needed retuning from its M4 placeholder value
- * (#7a7a7a light / #7d7b87 dark): both only cleared the 3:1 large-text threshold, but every use
- * of it in the app is small metadata text (12px), which needs 4.5:1.
+ * Token system per spec §9.1: semantic custom properties, dark-only (the app's one and only
+ * design — the light theme and the system/light/dark picker were removed per user request; there
+ * is no `data-theme` switching left anywhere). Every text/surface pairing actually used in the UI
+ * hits WCAG AA (4.5:1) for its real size — verified with a standalone relative-luminance script
+ * against every surface×text combination, not eyeballed.
  *
  * The card intentionally never overlays text on artwork (art is a full hero block, metadata
  * lives in a separate quiet zone below it per §9.2's own "at the base" framing) — so §9.1's
@@ -15,40 +13,6 @@
  * background to test contrast against in the first place.
  */
 :root {
-  --surface-base: #f5f3ef;
-  --surface-raised: #ffffff;
-  --surface-overlay: #ffffff;
-  --text-primary: #1a1a1a;
-  --text-secondary: #4a4a4a;
-  --text-muted: #6f6f6f;
-  --border-subtle: #e2ddd3;
-  --accent: #b5502f;
-  --keep: #2f6d4f;
-  --discard: #b5502f;
-  /* Text color for content painted directly on a solid --accent fill (the "Start session" CTA) —
-     a separate token because --accent itself is too different in luminance between the two
-     themes (dark bg in light mode, light bg in dark mode) for one text color to hit AA in both;
-     checked with the same relative-luminance script as the rest of this file. */
-  --accent-contrast: #fdfaf5;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --surface-base: #16151a;
-    --surface-raised: #201f26;
-    --surface-overlay: #26252d;
-    --text-primary: #f2f1ee;
-    --text-secondary: #b8b6c0;
-    --text-muted: #8c8c8c;
-    --border-subtle: #35333d;
-    --accent: #e08a5f;
-    --keep: #5fbb8e;
-    --discard: #e0725f;
-    --accent-contrast: #16151a;
-  }
-}
-
-:root[data-theme='dark'] {
   --surface-base: #16151a;
   --surface-raised: #201f26;
   --surface-overlay: #26252d;
@@ -56,10 +20,12 @@
   --text-secondary: #b8b6c0;
   --text-muted: #8c8c8c;
   --border-subtle: #35333d;
-  --accent: #e08a5f;
+  --accent: #6c9fef;
   --keep: #5fbb8e;
   --discard: #e0725f;
-  --accent-contrast: #16151a;
+  /* Text color for content painted directly on a solid --accent fill (the "Start Purging" CTA) —
+     --accent's luminance sits in a mid band, so a dark navy reads legibly on top of it. */
+  --accent-contrast: #132238;
 }
 
 body {
@@ -93,7 +59,6 @@ button:not(:disabled) {
     box-shadow 150ms ease;
 }
 button:not(:disabled):hover {
-  transform: translateY(-1px);
   background-color: color-mix(in srgb, currentColor 12%, transparent);
   filter: brightness(1.08);
 }
