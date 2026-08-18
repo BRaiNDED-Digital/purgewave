@@ -9,7 +9,7 @@ import { disposeTracks } from './disposal/dispose'
 import { restoreMovedFile } from './disposal/restore'
 import { computeLifetimeStats } from './library/stats'
 import { findDormantTracks } from './library/dormant'
-import { initAutoUpdater } from './updater'
+import { initAutoUpdater, downloadUpdate, installUpdate } from './updater'
 import { writeJsonAtomic, readJsonWithFallback } from './state/atomicWrite'
 import { DecisionsStore } from './state/decisionsStore'
 import { getLibraryFilePath, getDecisionsFilePath, getArtDir, getSettingsFilePath } from './state/paths'
@@ -100,6 +100,8 @@ function registerSecurityHeaders(): void {
   })
 }
 
+let mainWindow: BrowserWindow | null = null
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1360,
@@ -130,6 +132,11 @@ function createWindow(): void {
   // allow-list destinations.
   win.webContents.on('will-navigate', (event) => event.preventDefault())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
+  mainWindow = win
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
   if (rendererUrl) {
@@ -383,6 +390,12 @@ function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle('app:getVersion', (): string => app.getVersion())
+
+  ipcMain.handle('updater:download', () => downloadUpdate())
+
+  ipcMain.handle('updater:install', () => installUpdate())
+
   ipcMain.handle('settings:get', (): Settings => settings)
 
   ipcMain.handle('settings:update', async (_event, partial: Partial<Settings>): Promise<{ ok: true }> => {
@@ -406,7 +419,7 @@ app.whenReady().then(async () => {
   registerTrackProtocolHandler(() => library)
   registerSecurityHeaders()
   createWindow()
-  if (settings.checkForUpdates) initAutoUpdater()
+  if (settings.checkForUpdates) initAutoUpdater(() => mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

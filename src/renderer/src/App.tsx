@@ -7,6 +7,7 @@ import { RestoreScreen } from './session/RestoreScreen'
 import { SettingsScreen } from './session/SettingsScreen'
 import { GearIcon } from './session/icons'
 import { Logo } from './Logo'
+import { VersionLabel, UpdateModal } from './UpdateNotice'
 
 type ScanState =
   | { phase: 'idle' }
@@ -150,6 +151,8 @@ function App() {
     return (
       <div className="flex min-h-screen flex-col">
         <SwipeScreen queue={view.queue} limit={view.limit} onEndSession={handleSessionEnd} />
+        <VersionLabel />
+        <UpdateModal />
       </div>
     )
   }
@@ -162,6 +165,8 @@ function App() {
           sessionStats={view.sessionStats}
           onDone={() => setView({ name: 'library' })}
         />
+        <VersionLabel />
+        <UpdateModal />
       </div>
     )
   }
@@ -170,6 +175,8 @@ function App() {
     return (
       <div className="flex min-h-screen flex-col">
         <RestoreScreen onDone={() => setView({ name: 'library' })} />
+        <VersionLabel />
+        <UpdateModal />
       </div>
     )
   }
@@ -178,6 +185,8 @@ function App() {
     return (
       <div className="flex min-h-screen flex-col">
         <SettingsScreen onDone={() => setView({ name: 'library' })} />
+        <VersionLabel />
+        <UpdateModal />
       </div>
     )
   }
@@ -351,6 +360,8 @@ function App() {
           <GearIcon size={14} /> Settings
         </button>
       </div>
+      <VersionLabel />
+      <UpdateModal />
     </div>
   )
 }

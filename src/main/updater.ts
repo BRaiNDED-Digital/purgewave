@@ -1,24 +1,69 @@
-import { app } from 'electron'
+import { app, type BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
+import { appendFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 /**
- * Spec §11: check on launch, download in the background, install on quit, never interrupt an
- * active session with a prompt. `autoInstallOnAppQuit` is electron-updater's default (true) —
- * once a download completes it installs itself on the next quit with no extra code here.
- *
- * Not exercised end-to-end anywhere in this codebase: it needs a real packaged build pointed at
- * a real GitHub Releases feed (electron-builder.yml's `publish.owner`/`repo` are placeholders),
- * neither of which exist yet. `autoUpdater` is also a no-op outside a packaged app, so this is
- * safe to call unconditionally in dev — it just does nothing.
+ * Check on launch, notify the renderer, and let the user decide when to download and restart —
+ * per user request, replacing the original spec §11 "silent background download, install on
+ * quit" behavior. That original flow shipped in v1.0.0/v1.0.1 but was never actually observed to
+ * update a real install: most likely cause is a per-machine (Program Files) install requiring
+ * admin elevation that a background update step can't get (see electron-builder.yml's new
+ * `perMachine: false`), compounded by the old code having no 'error' listener at all — an
+ * unhandled 'error' event on an EventEmitter throws, so a failed check/download could fail
+ * completely silently with nothing surfaced anywhere. This version logs every lifecycle event to
+ * a plain text file so a failure is diagnosable instead of invisible.
  */
-export function initAutoUpdater(): void {
+function logPath(): string {
+  return join(app.getPath('userData'), 'update.log')
+}
+
+async function log(line: string): Promise<void> {
+  try {
+    await appendFile(logPath(), `[${new Date().toISOString()}] ${line}\n`)
+  } catch {
+    // Logging must never take down the update flow.
+  }
+}
+
+export function initAutoUpdater(getWindow: () => BrowserWindow | null): void {
   if (!app.isPackaged) return
 
-  try {
-    autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
-    void autoUpdater.checkForUpdates()
-  } catch {
-    // A failed update check must never take down the app.
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = false
+
+  const send = (channel: string, payload: unknown): void => {
+    getWindow()?.webContents.send(channel, payload)
   }
+
+  autoUpdater.on('error', (err) => {
+    void log(`error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+  })
+  autoUpdater.on('checking-for-update', () => void log('checking-for-update'))
+  autoUpdater.on('update-not-available', (info) => void log(`update-not-available (current ${info.version})`))
+  autoUpdater.on('update-available', (info) => {
+    void log(`update-available: ${info.version}`)
+    send('updater:available', { version: info.version })
+  })
+  autoUpdater.on('download-progress', (p) => {
+    void log(`download-progress: ${Math.round(p.percent)}%`)
+    send('updater:progress', { percent: p.percent })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    void log(`update-downloaded: ${info.version}`)
+    send('updater:downloaded', { version: info.version })
+  })
+
+  void log(`initAutoUpdater: current version ${app.getVersion()}, checking for updates`)
+  autoUpdater.checkForUpdates().catch((err) => void log(`checkForUpdates failed: ${err}`))
+}
+
+export async function downloadUpdate(): Promise<void> {
+  await log('user requested download')
+  await autoUpdater.downloadUpdate()
+}
+
+export function installUpdate(): void {
+  void log('user requested install/restart')
+  autoUpdater.quitAndInstall()
 }

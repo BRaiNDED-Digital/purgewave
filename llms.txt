@@ -87,7 +87,7 @@ moved on since this was written.
 - `electron-builder.yml` — NSIS Windows target config.
 - `package.json` scripts — `dev`, `build`, `test`, `typecheck`, `dist`, `dist:local` (see CLAUDE.md's Packaging section for what `dist:local` does and why it force-installs `sharp`'s win32-x64 binary).
 - `.github/workflows/build.yml` — the real Windows-runner build (this container can't produce the final `.exe`, see CLAUDE.md).
-- `src/main/updater.ts` — `electron-updater` wiring, gated by `checkForUpdates` setting + `app.isPackaged`. Unverified end-to-end (needs a real packaged build + release feed).
+- `src/main/updater.ts` — `electron-updater` wiring, gated by `checkForUpdates` setting + `app.isPackaged`. Check-on-launch, notify-then-user-confirms-download-and-restart (not silent background install — see CLAUDE.md's Packaging section for why that original flow was replaced); logs every lifecycle event to `<userData>/update.log`. `src/renderer/src/UpdateNotice.tsx` exports `VersionLabel` (plain corner text, always shown) and `UpdateModal` (blocking dialog shown only when an update is available/downloading/downloaded — user explicitly wanted a modal, not a dismiss-and-forget pill).
 
 ## Tests
 All co-located as `*.test.ts` next to the module under test, run via `npm run test` (vitest).

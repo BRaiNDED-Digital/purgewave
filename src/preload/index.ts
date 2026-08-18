@@ -87,7 +87,31 @@ const api = {
   previewForgetDormant: (): Promise<DormantTrack[]> => ipcRenderer.invoke('library:previewForgetDormant'),
 
   forgetDormant: (trackIds: string[]): Promise<{ ok: true; forgotten: number }> =>
-    ipcRenderer.invoke('library:forgetDormant', { trackIds })
+    ipcRenderer.invoke('library:forgetDormant', { trackIds }),
+
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
+
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('updater:download'),
+
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('updater:install'),
+
+  onUpdateAvailable: (callback: (info: { version: string }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, info: { version: string }): void => callback(info)
+    ipcRenderer.on('updater:available', listener)
+    return () => ipcRenderer.removeListener('updater:available', listener)
+  },
+
+  onUpdateDownloaded: (callback: (info: { version: string }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, info: { version: string }): void => callback(info)
+    ipcRenderer.on('updater:downloaded', listener)
+    return () => ipcRenderer.removeListener('updater:downloaded', listener)
+  },
+
+  onUpdateProgress: (callback: (info: { percent: number }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, info: { percent: number }): void => callback(info)
+    ipcRenderer.on('updater:progress', listener)
+    return () => ipcRenderer.removeListener('updater:progress', listener)
+  }
 }
 
 contextBridge.exposeInMainWorld('purgewave', api)

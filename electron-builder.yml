@@ -19,6 +19,11 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # Per-user install (%LOCALAPPDATA%, no admin/UAC prompt needed) rather than per-machine
+  # (Program Files). electron-updater's background update-install step can't elevate itself, so a
+  # per-machine install silently fails to self-update — this is the most likely reason v1.0.1
+  # never landed for anyone who picked "install for all users" on the v1.0.0 installer.
+  perMachine: false
 
 # electron-updater checks this against GitHub Releases (spec §11: no server needed).
 publish:
