@@ -181,7 +181,12 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     updated,
     missing: newlyMissing,
     pruned: autoForgotten,
-    total: Object.keys(tracks).length
+    // NOT Object.keys(tracks).length — `tracks` never shrinks when the root changes (§3.6: no
+    // automatic pruning), so that would keep counting every track from every root ever pointed
+    // at, including ones now `missing` because they belong to a folder that's no longer mapped.
+    // "Tracks indexed" should mean tracks actually present under the *current* root — i.e.
+    // everything except the ones this exact reconcile pass just confirmed are missing.
+    total: Object.keys(tracks).filter((id) => decisionsD[id]?.s !== 'missing').length
   }
 
   return { aborted: false, library, decisions, result }

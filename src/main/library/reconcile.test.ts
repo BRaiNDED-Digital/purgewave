@@ -241,6 +241,36 @@ describe('reconcile', () => {
     expect(out.result.total).toBe(0)
   })
 
+  it("result.total reflects only the current root's tracks, not every track ever indexed", () => {
+    // Regression test: switching to an entirely different root (no shared fingerprints) used to
+    // leave `result.total` as the sum of the old root's now-missing tracks plus the new root's —
+    // e.g. 1000 old + 5 new reported as 1005 "tracks indexed", even though only 5 files actually
+    // exist under the folder the user just mapped. `tracks` itself never shrinks (§3.6), so
+    // `total` has to be computed by excluding `missing` entries rather than just counting keys.
+    const prev = library(
+      {
+        t1: track({ path: '/old-drive/a.mp3', fp: 'A' }),
+        t2: track({ path: '/old-drive/b.mp3', fp: 'B' }),
+        t3: track({ path: '/old-drive/c.mp3', fp: 'C' })
+      },
+      { musicRoot: '/old-drive' }
+    )
+    const decisions = decisionsFile({ t1: { s: 'keep', r: 5, n: 1 } })
+
+    const out = reconcile({
+      musicRoot: '/new-drive',
+      previousLibrary: prev,
+      previousDecisions: decisions,
+      freshEntries: [fresh({ path: '/new-drive/x.mp3', fp: 'X' })],
+      scanSeq: 2
+    })
+
+    expect(out.aborted).toBe(false)
+    if (out.aborted) return
+    expect(out.result.total).toBe(1)
+    expect(Object.keys(out.library.tracks)).toHaveLength(4) // old records still preserved, per §3.6
+  })
+
   it('rebases every matching fingerprint onto a new root without losing status', () => {
     const prev = library(
       { t1: track({ path: '/old-drive/a.mp3', fp: 'X' }) },

@@ -2,6 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Dev-mode's only CSP coverage — main/index.ts's registerSecurityHeaders (the more capable,
+         HTTP-header-level CSP, which also covers directives a meta tag can't express, like
+         frame-ancestors) deliberately skips the Vite dev server entirely; see the comment there
+         for why. The packaged app gets both this meta tag *and* that header-level CSP active at
+         once, which is fine — it's Vite's dev-mode HTML transform specifically that didn't
+         tolerate a second CSP source, not CSP-doubling in general. -->
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' track:" />
     <title>PurgeWave</title>
   </head>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, session } from 'electron'
 import { join } from 'node:path'
 import { scanLibrary } from './library/scan'
 import { buildQueue } from './library/queue'
@@ -56,6 +56,50 @@ function toMarkedTrack(id: string): MarkedTrack | null {
 // before a window/renderer exists, which is exactly the launch-time window this exists to close.
 const BACKGROUND_COLOR = '#16151a'
 
+// index.html's own <meta http-equiv="Content-Security-Policy"> covers the common case, but a
+// meta tag can't express every directive (frame-ancestors and sandbox are HTTP-header-only) and
+// Electron's own security checklist recommends setting CSP at the response-header level rather
+// than relying on the meta tag alone. X-Content-Type-Options/X-Frame-Options/Referrer-Policy are
+// the standard low-cost companions: nosniff matters most for the track:// handler (it does set a
+// real Content-Type per file extension, but nothing stops a renderer bug from treating an
+// unexpected response as something to sniff); the other two are cheap insurance even though this
+// app has no iframe/cross-origin-referrer surface to actually exploit today.
+//
+// Deliberately skipped in dev mode (ELECTRON_RENDERER_URL set): intercepting the Vite dev
+// server's own responses here broke its react-refresh preamble injection outright — the window
+// loaded fully blank with "Uncaught Error: @vitejs/plugin-react can't detect preamble" in the
+// console, confirmed by toggling this function on/off with everything else held constant, not
+// just suspected from reading CSP semantics. Not worth chasing *why* dev-server response headers
+// and Vite's HTML transform interact badly here: the dev server's responses never ship to a real
+// user, only the packaged app's file:// document and track:// audio responses do, and both of
+// those still go through this handler.
+function registerSecurityHeaders(): void {
+  if (process.env.ELECTRON_RENDERER_URL) return
+
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "media-src 'self' track:",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'none'"
+  ].join('; ')
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp],
+        'X-Content-Type-Options': ['nosniff'],
+        'X-Frame-Options': ['DENY'],
+        'Referrer-Policy': ['no-referrer']
+      }
+    })
+  })
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1360,
@@ -71,11 +115,21 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      // Safe to enable: the preload script (src/preload/index.ts) only ever calls
+      // contextBridge/ipcRenderer — no fs, no other Node built-ins — so it needs nothing sandbox
+      // mode would take away.
+      sandbox: true
     }
   })
 
   win.once('ready-to-show', () => win.show())
+
+  // This app never links out or opens external windows — any navigation away from the app's own
+  // renderer document, or any attempt to open a new window/tab, can only be a malicious/compromised
+  // renderer trying to reach an attacker-controlled page. Block both outright rather than trying to
+  // allow-list destinations.
+  win.webContents.on('will-navigate', (event) => event.preventDefault())
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
   const rendererUrl = process.env.ELECTRON_RENDERER_URL
   if (rendererUrl) {
@@ -117,11 +171,15 @@ function registerIpcHandlers(): void {
     if (!library) {
       library = await readJsonWithFallback<LibraryFile>(getLibraryFilePath())
     }
-    const pendingDeletes = Object.values(decisionsStore.getAll().d).filter((e) => e.s === 'delete').length
+    const decisions = decisionsStore.getAll().d
+    const pendingDeletes = Object.values(decisions).filter((e) => e.s === 'delete').length
+    // Same reasoning as reconcile.ts's ScanResult.total: exclude tracks marked `missing` (left
+    // over from a previously-mapped root) so this reflects tracks actually under the current one.
+    const trackCount = library ? Object.keys(library.tracks).filter((id) => decisions[id]?.s !== 'missing').length : 0
     return {
       root: library?.musicRoot ?? null,
       lastScanAt: library?.lastScanAt ?? null,
-      trackCount: library ? Object.keys(library.tracks).length : 0,
+      trackCount,
       pendingDeletes
     }
   })
@@ -346,6 +404,7 @@ app.whenReady().then(async () => {
   settings = { ...createDefaultSettings(), ...(await readJsonWithFallback<Settings>(getSettingsFilePath())) }
   registerIpcHandlers()
   registerTrackProtocolHandler(() => library)
+  registerSecurityHeaders()
   createWindow()
   if (settings.checkForUpdates) initAutoUpdater()
 
