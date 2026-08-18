@@ -1,6 +1,6 @@
 {
   "name": "purgewave",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
