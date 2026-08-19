@@ -230,6 +230,17 @@ function App() {
               No folder chosen yet
             </p>
           )}
+          {/* Live count, not a snapshot of the last scan — `trackCount` re-fetches via getState()
+              every time this screen is shown (see the effect above), so it goes down right after
+              purging instead of being stuck at whatever the last "Scan complete" total said. Per
+              user feedback: a number that doesn't move after you purge tracks is confusing, even
+              though it used to be technically accurate as "everything ever indexed under this
+              root" — this reads instead as "what's actually still in your folder right now." */}
+          {displayRoot && (
+            <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+              {displayTrackCount} track{displayTrackCount === 1 ? '' : 's'} in your library
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap justify-center gap-2">
@@ -270,12 +281,10 @@ function App() {
         )}
 
         {scan.phase === 'done' && (
-          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            <p>Scan complete: {scan.result.total} tracks indexed.</p>
-            <p>
-              {scan.result.added} added, {scan.result.updated} updated, {scan.result.missing} newly missing.
-            </p>
-          </div>
+          <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            Scan complete: {scan.result.added} added, {scan.result.updated} updated, {scan.result.missing} newly
+            missing.
+          </p>
         )}
 
         {scan.phase === 'aborted' && (

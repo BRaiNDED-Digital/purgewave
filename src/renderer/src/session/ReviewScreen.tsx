@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
+import { motion } from 'framer-motion'
 import type { DisposalMode, DisposeResult, MarkedTrack, Settings } from '../../../shared/types'
 import type { SessionSummary } from './SwipeScreen'
+
+// How long the auto-dismissing "done" screen stays up before animating back to the main menu on
+// its own — per user request: no button to click through, just a brief confirmation and back out.
+const DONE_SCREEN_HOLD_MS = 1400
 
 interface Props {
   sessionKeptIds: string[]
@@ -34,6 +39,7 @@ export function ReviewScreen({ sessionKeptIds, sessionStats, onDone }: Props) {
   const [result, setResult] = useState<DisposeResult | null>(null)
   const [needsPermanentPrompt, setNeedsPermanentPrompt] = useState<string[] | null>(null)
   const [processing, setProcessing] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   // Deleting is the higher-stakes list, so it's the tab shown by default — but only when there's
   // actually something in it; defaulting to it anyway when it's empty just shows a blank list
   // with nothing to act on. Corrected once the real data loads, below.
@@ -126,6 +132,15 @@ export function ReviewScreen({ sessionKeptIds, sessionStats, onDone }: Props) {
     )
   }
 
+  // Auto-dismiss only the clean-success case — if anything failed, the user needs to actually
+  // read what and why, so that variant keeps its explicit "Done" button instead (see the render
+  // branch below).
+  useEffect(() => {
+    if (!result || needsPermanentPrompt || result.failed.length > 0) return
+    const timer = setTimeout(() => setLeaving(true), DONE_SCREEN_HOLD_MS)
+    return () => clearTimeout(timer)
+  }, [result, needsPermanentPrompt])
+
   if (loading || !settings) {
     return <div className="p-8 text-center" style={{ color: 'var(--text-secondary)' }}>Loading review…</div>
   }
@@ -146,8 +161,8 @@ export function ReviewScreen({ sessionKeptIds, sessionStats, onDone }: Props) {
   }
 
   if (result && !needsPermanentPrompt) {
-    return (
-      <div className="mx-auto flex max-w-md flex-1 flex-col gap-3 p-6 text-center">
+    const summary = (
+      <>
         <h2 className="text-2xl font-semibold" style={{ color: 'var(--text-primary)' }}>
           {result.mode === 'quarantine' ? 'Moved' : 'Disposed'}
         </h2>
@@ -167,7 +182,15 @@ export function ReviewScreen({ sessionKeptIds, sessionStats, onDone }: Props) {
             {result.foldersRemoved} now-empty folder{result.foldersRemoved === 1 ? '' : 's'} removed
           </p>
         )}
-        {result.failed.length > 0 && (
+      </>
+    )
+
+    // Anything failed: stays up with an explicit "Done" button — the user needs to actually read
+    // what/why rather than have it animate away on a timer (see the effect above).
+    if (result.failed.length > 0) {
+      return (
+        <div className="mx-auto flex max-w-md flex-1 flex-col gap-3 p-6 text-center">
+          {summary}
           <div className="mt-2 rounded-lg border p-3 text-left text-sm" style={{ borderColor: 'var(--discard)' }}>
             <p style={{ color: 'var(--discard)' }}>{result.failed.length} failed:</p>
             {result.failed.map((f) => (
@@ -176,15 +199,32 @@ export function ReviewScreen({ sessionKeptIds, sessionStats, onDone }: Props) {
               </p>
             ))}
           </div>
-        )}
-        <button
-          onClick={onDone}
-          className="mt-4 rounded-xl border px-6 py-3 font-medium"
-          style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
-        >
-          Done
-        </button>
-      </div>
+          <button
+            onClick={onDone}
+            className="mt-4 rounded-xl border px-6 py-3 font-medium"
+            style={{ borderColor: 'var(--border-subtle)', color: 'var(--text-primary)' }}
+          >
+            Done
+          </button>
+        </div>
+      )
+    }
+
+    // Clean success: a brief, self-dismissing confirmation — fades/scales in, holds for
+    // DONE_SCREEN_HOLD_MS, then fades/scales back out and returns to the main menu on its own,
+    // no button to click through.
+    return (
+      <motion.div
+        className="mx-auto flex max-w-md flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={leaving ? { opacity: 0, scale: 0.96 } : { opacity: 1, scale: 1 }}
+        transition={{ duration: 0.25 }}
+        onAnimationComplete={() => {
+          if (leaving) onDone()
+        }}
+      >
+        {summary}
+      </motion.div>
     )
   }
 

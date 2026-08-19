@@ -184,9 +184,15 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
     // NOT Object.keys(tracks).length — `tracks` never shrinks when the root changes (§3.6: no
     // automatic pruning), so that would keep counting every track from every root ever pointed
     // at, including ones now `missing` because they belong to a folder that's no longer mapped.
-    // "Tracks indexed" should mean tracks actually present under the *current* root — i.e.
-    // everything except the ones this exact reconcile pass just confirmed are missing.
-    total: Object.keys(tracks).filter((id) => decisionsD[id]?.s !== 'missing').length
+    // Also excludes `trashed`/`moved`: those records are deliberately never marked `missing`
+    // (disposal is expected to make the file disappear, not an error worth flagging — see the
+    // `continue` for those statuses above), so without this exclusion a purged track would stay
+    // counted forever, making the total look like it never goes down after purging. "Tracks
+    // indexed" should mean tracks actually still present under the *current* root.
+    total: Object.keys(tracks).filter((id) => {
+      const s = decisionsD[id]?.s
+      return s !== 'missing' && s !== 'trashed' && s !== 'moved'
+    }).length
   }
 
   return { aborted: false, library, decisions, result }

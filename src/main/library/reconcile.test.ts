@@ -271,6 +271,37 @@ describe('reconcile', () => {
     expect(Object.keys(out.library.tracks)).toHaveLength(4) // old records still preserved, per §3.6
   })
 
+  it('result.total excludes trashed/moved tracks, so it goes down after purging', () => {
+    // Regression test: disposing of a track (Recycle Bin or quarantine move) sets its decision
+    // status to 'trashed'/'moved', but deliberately never 'missing' — reconcile's own missing-scan
+    // loop skips those statuses on purpose, since a purged file being gone from disk is expected,
+    // not an anomaly worth flagging. `result.total` used to only exclude `missing`, so a purged
+    // track stayed counted in "tracks indexed" forever — reported by a real user as "the number
+    // doesn't go down after purging tracks."
+    const prev = library({
+      t1: track({ path: '/music/a.mp3', fp: 'A' }),
+      t2: track({ path: '/music/b.mp3', fp: 'B' }),
+      t3: track({ path: '/music/c.mp3', fp: 'C' })
+    })
+    const decisions = decisionsFile({
+      t1: { s: 'trashed', r: 5, n: 1, x: 1000 },
+      t2: { s: 'moved', r: 5, n: 1, x: 1000, movedTo: '/quarantine/b.mp3' }
+    })
+
+    const out = reconcile({
+      musicRoot: '/music',
+      previousLibrary: prev,
+      previousDecisions: decisions,
+      // t1/t2 are physically gone (disposed of); only t3 remains on disk.
+      freshEntries: [fresh({ path: '/music/c.mp3', fp: 'C' })],
+      scanSeq: 2
+    })
+
+    expect(out.aborted).toBe(false)
+    if (out.aborted) return
+    expect(out.result.total).toBe(1)
+  })
+
   it('rebases every matching fingerprint onto a new root without losing status', () => {
     const prev = library(
       { t1: track({ path: '/old-drive/a.mp3', fp: 'X' }) },

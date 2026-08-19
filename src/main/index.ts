@@ -180,9 +180,16 @@ function registerIpcHandlers(): void {
     }
     const decisions = decisionsStore.getAll().d
     const pendingDeletes = Object.values(decisions).filter((e) => e.s === 'delete').length
-    // Same reasoning as reconcile.ts's ScanResult.total: exclude tracks marked `missing` (left
-    // over from a previously-mapped root) so this reflects tracks actually under the current one.
-    const trackCount = library ? Object.keys(library.tracks).filter((id) => decisions[id]?.s !== 'missing').length : 0
+    // Same reasoning as reconcile.ts's ScanResult.total: exclude `missing` (left over from a
+    // previously-mapped root) AND `trashed`/`moved` (purged tracks, which are never marked
+    // `missing` since disposal is expected to remove them — see reconcile.ts) so this reflects
+    // tracks actually still present under the current root, and goes down as you purge.
+    const trackCount = library
+      ? Object.keys(library.tracks).filter((id) => {
+          const s = decisions[id]?.s
+          return s !== 'missing' && s !== 'trashed' && s !== 'moved'
+        }).length
+      : 0
     return {
       root: library?.musicRoot ?? null,
       lastScanAt: library?.lastScanAt ?? null,
