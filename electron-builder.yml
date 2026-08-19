@@ -7,6 +7,32 @@ directories:
 files:
   - out/**/*
   - package.json
+  # Windows-only build — trims dead weight electron-builder would otherwise bundle from
+  # node_modules (it always packs the full production dependency tree regardless of what's
+  # listed above, filtered through these same include/exclude patterns):
+  #  - sharp's non-win32 platform binaries + libvips, installed alongside the win32 ones so
+  #    `npm run dev`/`test` keep working on this Linux devcontainer (see dist/dist:local's
+  #    `--os=win32 --cpu=x64` install line) — never loaded on Windows, ~46MB.
+  #  - sharp's wasm32 fallback — only relevant if the native win32-x64 binary fails to load,
+  #    which isn't a real risk for a plain x64 NSIS target, ~9MB.
+  #  - react/react-dom/framer-motion's raw node_modules source — the renderer is a separately
+  #    pre-bundled Vite output (out/renderer/assets/*.js) that already inlines all three;
+  #    main/preload never import them (both use electron-vite's externalizeDepsPlugin, which
+  #    is exactly why sharp/music-metadata/electron-updater DO still need real node_modules
+  #    present — they're required at runtime, not bundled), ~18MB.
+  # Verified nothing broke: artwork thumbnails (sharp) and swipe-card drag/exit animations
+  # (framer-motion) both still work in the packaged --dir build after this change.
+  - "!node_modules/@img/sharp-linux-x64/**/*"
+  - "!node_modules/@img/sharp-linuxmusl-x64/**/*"
+  - "!node_modules/@img/sharp-libvips-linux-x64/**/*"
+  - "!node_modules/@img/sharp-libvips-linuxmusl-x64/**/*"
+  - "!node_modules/@img/sharp-wasm32/**/*"
+  - "!node_modules/react/**/*"
+  - "!node_modules/react-dom/**/*"
+  - "!node_modules/framer-motion/**/*"
+  - "!node_modules/motion-dom/**/*"
+  - "!node_modules/motion-utils/**/*"
+  - "!node_modules/scheduler/**/*"
 
 win:
   target:
